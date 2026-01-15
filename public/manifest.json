@@ -1,7 +1,7 @@
 {
-  "name": "Cubase Articulation Remote",
-  "short_name": "Cubase Remote",
-  "description": "Control Cubase Expression Maps from your iPad",
+  "name": "Cubby Remote",
+  "short_name": "Cubby",
+  "description": "Expression Map remote control for your iPad",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1a1a2e",

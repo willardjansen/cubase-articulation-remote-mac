@@ -5,7 +5,6 @@ import { ExpressionMap, parseExpressionMap, autoAssignRemoteTriggers, hasUnassig
 import { midiHandler, MidiState } from '@/lib/midiHandler';
 import { ArticulationGrid } from '@/components/ArticulationGrid';
 import { MidiSettings } from '@/components/MidiSettings';
-import { FileDropZone } from '@/components/FileDropZone';
 import { InstrumentLibrary } from '@/components/InstrumentLibrary';
 import About from '@/components/About';
 
@@ -254,7 +253,7 @@ export default function Home() {
       <header className="bg-cubase-surface border-b border-cubase-accent px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold text-cubase-text">
-            Cubase Remote
+            Cubby Remote
           </h1>
           {/* MIDI status indicator */}
           <div className="flex items-center gap-2">
@@ -415,40 +414,36 @@ export default function Home() {
         )}
 
         {activeMap ? (
-          <ArticulationGrid 
+          <ArticulationGrid
             expressionMap={activeMap}
             columns={columns}
             buttonSize={buttonSize}
           />
         ) : (
-          <div className="max-w-xl mx-auto mt-8">
-            <FileDropZone 
-              onMapLoaded={handleMapLoaded}
-              onError={setError}
-            />
-            
-            <div className="mt-8 text-center">
-              <h2 className="text-lg font-medium text-cubase-text mb-4">
-                Getting Started
-              </h2>
-              <ol className="text-left text-cubase-muted space-y-3 max-w-md mx-auto">
-                <li className="flex gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cubase-accent 
-                                 flex items-center justify-center text-sm font-bold">1</span>
-                  <span>Drop a Cubase Expression Map file above</span>
-                </li>
-                <li className="flex gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cubase-accent 
-                                 flex items-center justify-center text-sm font-bold">2</span>
-                  <span>Configure MIDI output in settings (gear icon)</span>
-                </li>
-                <li className="flex gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cubase-accent 
-                                 flex items-center justify-center text-sm font-bold">3</span>
-                  <span>Tap articulations to switch sounds in Cubase!</span>
-                </li>
-              </ol>
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
+            <div className="w-16 h-16 mb-6 rounded-full bg-cubase-accent/20 flex items-center justify-center">
+              <svg className="w-8 h-8 text-cubase-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                      d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+              </svg>
             </div>
+            <h2 className="text-xl font-medium text-cubase-text mb-2">
+              Waiting for Cubase
+            </h2>
+            <p className="text-cubase-muted max-w-sm mb-2">
+              Start Cubase and select a track with an Expression Map.
+              The articulations will appear here automatically.
+            </p>
+            <p className="text-cubase-muted/70 text-sm">
+              If Cubase is already running, please select a track.
+            </p>
+            {!midiState?.isConnected && (
+              <div className="mt-6 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+                <p className="text-yellow-400 text-sm">
+                  MIDI not connected. Make sure Cubase is running and the MIDI Remote script is installed.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

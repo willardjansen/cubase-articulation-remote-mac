@@ -3,13 +3,13 @@ import './globals.css';
 import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
 
 export const metadata: Metadata = {
-  title: 'Cubase Articulation Remote',
-  description: 'Control Cubase Expression Maps from your iPad',
+  title: 'Cubby Remote',
+  description: 'Expression Map remote control for your iPad',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Cubase Remote',
+    title: 'Cubby Remote',
   },
 };
 

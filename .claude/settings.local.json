@@ -37,7 +37,16 @@
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd .claude/settings.local.json to .gitignore\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git push:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npm run electron:dev:*)",
+      "Bash(npm run electron:build:*)",
+      "Bash(open \"/Users/willardjansen/dev/new cubase -art switcher/cubase-articulation-remote/dist/Cubase Articulation Remote-1.0.0-arm64.dmg\")",
+      "Bash(\"/Applications/Cubase Articulation Remote.app/Contents/MacOS/Cubase Articulation Remote\")",
+      "Bash(pkill:*)",
+      "Bash(npm rebuild:*)",
+      "Bash(open:*)",
+      "Bash(python3:*)",
+      "Bash(rsvg-convert:*)"
     ]
   }
 }

@@ -1,6 +1,6 @@
-# Cubase Articulation Remote
+# Cubby Remote
 
-A web-based remote control for Cubase Expression Maps, designed for iPad/tablet use. Load your expression maps and tap articulations to switch sounds in Cubase via MIDI.
+A web-based remote control for Cubase Expression Maps, designed for iPad/tablet use. Automatically loads expression maps when you select tracks in Cubase, displaying tappable articulation buttons to switch sounds via MIDI.
 
 > **⚠️ This is FREE software.** If you paid for this, you were scammed.
 > Official source: https://github.com/willardjansen/cubase-articulation-remote
@@ -48,6 +48,8 @@ npm run dev     # Terminal 2: Web server
 The MIDI bridge (`npm run midi`) auto-detects and displays your IP address on startup.
 
 **Note:** Your PC can be on Ethernet while iPad is on WiFi - they just need to be on the same network.
+
+![Cubby Remote Screenshot](docs/images/screenshot.png)
 
 ## Architecture
 

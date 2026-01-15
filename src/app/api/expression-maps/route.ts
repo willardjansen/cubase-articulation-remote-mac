@@ -10,6 +10,13 @@ interface MapFile {
   folder: string;
 }
 
+// Ensure the expression maps directory exists
+function ensureDirectoryExists() {
+  if (!fs.existsSync(EXPRESSION_MAPS_DIR)) {
+    fs.mkdirSync(EXPRESSION_MAPS_DIR, { recursive: true });
+  }
+}
+
 // GET /api/expression-maps - List all expression maps
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -40,9 +47,7 @@ export async function GET(request: Request) {
 
   // Otherwise, list all expression maps
   try {
-    if (!fs.existsSync(EXPRESSION_MAPS_DIR)) {
-      return NextResponse.json({ maps: [], message: 'No expression-maps folder found. Create it and add your .expressionmap files.' });
-    }
+    ensureDirectoryExists();
 
     const maps: MapFile[] = [];
 
@@ -81,5 +86,96 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('Error scanning expression maps:', error);
     return NextResponse.json({ error: 'Failed to scan expression maps' }, { status: 500 });
+  }
+}
+
+// POST /api/expression-maps - Upload a new expression map
+export async function POST(request: Request) {
+  try {
+    ensureDirectoryExists();
+
+    const formData = await request.formData();
+    const file = formData.get('file') as File | null;
+    const content = formData.get('content') as string | null;
+    let filename = formData.get('filename') as string | null;
+
+    // Handle file upload
+    if (file) {
+      filename = file.name;
+      const fileContent = await file.text();
+
+      // Validate it's an expression map
+      if (!filename.endsWith('.expressionmap')) {
+        return NextResponse.json({ error: 'Invalid file type. Must be .expressionmap' }, { status: 400 });
+      }
+
+      // Sanitize filename
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const fullPath = path.join(EXPRESSION_MAPS_DIR, safeName);
+
+      fs.writeFileSync(fullPath, fileContent, 'utf-8');
+
+      return NextResponse.json({
+        success: true,
+        filename: safeName,
+        message: `Uploaded ${safeName}`
+      });
+    }
+
+    // Handle content upload with filename
+    if (content && filename) {
+      if (!filename.endsWith('.expressionmap')) {
+        filename += '.expressionmap';
+      }
+
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const fullPath = path.join(EXPRESSION_MAPS_DIR, safeName);
+
+      fs.writeFileSync(fullPath, content, 'utf-8');
+
+      return NextResponse.json({
+        success: true,
+        filename: safeName,
+        message: `Saved ${safeName}`
+      });
+    }
+
+    return NextResponse.json({ error: 'No file or content provided' }, { status: 400 });
+  } catch (error) {
+    console.error('Error uploading expression map:', error);
+    return NextResponse.json({ error: 'Failed to upload expression map' }, { status: 500 });
+  }
+}
+
+// DELETE /api/expression-maps - Delete an expression map
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const filePath = searchParams.get('file');
+
+    if (!filePath) {
+      return NextResponse.json({ error: 'No file path provided' }, { status: 400 });
+    }
+
+    const fullPath = path.join(EXPRESSION_MAPS_DIR, filePath);
+
+    // Security: ensure the path is within the expression-maps directory
+    if (!fullPath.startsWith(EXPRESSION_MAPS_DIR)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
+
+    fs.unlinkSync(fullPath);
+
+    return NextResponse.json({
+      success: true,
+      message: `Deleted ${filePath}`
+    });
+  } catch (error) {
+    console.error('Error deleting expression map:', error);
+    return NextResponse.json({ error: 'Failed to delete expression map' }, { status: 500 });
   }
 }
