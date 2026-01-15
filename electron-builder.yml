@@ -64,6 +64,8 @@ win:
       arch:
         - x64
   icon: build/icon.ico
+  sign: null
+  certificateSubjectName: null
 
 nsis:
   oneClick: false
@@ -87,6 +89,3 @@ linux:
 # Rebuild native modules for Electron
 npmRebuild: true
 nodeGypRebuild: false
-
-# Include native dependencies
-includeSubNodeModules: false

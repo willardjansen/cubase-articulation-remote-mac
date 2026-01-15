@@ -1,6 +1,11 @@
 {
   "name": "cubby-remote",
   "version": "1.0.0",
+  "author": {
+    "name": "Willard Jansen",
+    "email": "willardjansen@me.com"
+  },
+  "description": "Remote control for Cubase Expression Map articulations",
   "private": true,
   "main": "electron/main.js",
   "scripts": {

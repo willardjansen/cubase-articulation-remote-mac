@@ -3,13 +3,43 @@
 ## Requirements
 
 - **Windows** or **macOS** computer running Cubase 12+
-- **Node.js** 18+ (for running the app locally)
-- **iPad** or tablet with modern browser (Safari/Chrome)
+- **iPad** or tablet with modern browser (Safari/Chrome) - optional
 - **loopMIDI** (Windows) or **IAC Driver** (macOS) for MIDI routing
 
 ---
 
-## Step 1: Install the Web App
+## Installation Methods
+
+### Method 1: Standalone App (Recommended for End Users)
+
+The easiest way to use Cubby Remote is with the standalone installer. No Node.js or terminal commands required!
+
+**Download:**
+- Windows: [Cubby Remote Setup 1.0.0.exe](https://github.com/willardjansen/cubase-articulation-remote/releases)
+- macOS: Coming soon
+
+**Install:**
+1. Run the installer
+2. Follow the setup wizard
+3. Launch "Cubby Remote" from Start Menu or Desktop shortcut
+4. The app runs in system tray and auto-opens browser at http://localhost:3000
+
+**Benefits:**
+- No Node.js installation needed
+- No terminal commands
+- System tray integration
+- Auto-starts on Windows login (optional)
+- Built-in MIDI server
+- Easy expression map management via tray menu
+
+Skip to **Step 2: Set Up Virtual MIDI Ports** below.
+
+### Method 2: Development Mode (For Developers)
+
+If you want to modify the code or run from source:
+
+**Requirements:**
+- **Node.js** 18+
 
 ```bash
 # Clone or download the project
@@ -130,6 +160,21 @@ sudo cp cubase-midi-remote/articulation_remote.js \
 
 ## Step 5: Add Expression Maps
 
+### For Standalone App Users
+
+Use the system tray menu to manage expression maps:
+
+1. **Right-click the Cubby Remote icon** in system tray (bottom right, near clock)
+2. Choose one of:
+   - **"Add Expression Maps..."** - Browse and import `.expressionmap` files
+   - **"Open Expression Maps Folder"** - Open the folder to copy files manually
+
+**Expression Maps Location:**
+- Windows: `C:\Users\USERNAME\AppData\Local\Programs\cubby-remote\resources\expression-maps\`
+- macOS: Inside the app bundle
+
+### For Development Mode Users
+
 Place your `.expressionmap` files in the `expression-maps/` folder:
 
 ```
@@ -142,6 +187,8 @@ expression-maps/
 └── Woodwinds/
     └── Flute.expressionmap
 ```
+
+### File Naming for Auto-Switching
 
 **Important:** Name files to match your Cubase track names. The app uses fuzzy matching:
 - Exact match: Track "Amati Viola" matches "Amati Viola.expressionmap"

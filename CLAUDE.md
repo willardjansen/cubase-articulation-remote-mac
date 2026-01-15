@@ -2,7 +2,11 @@
 
 ## Project Overview
 
-Cubase Articulation Remote is a Next.js web app that displays Cubase Expression Map articulations as tappable buttons. When tapped, buttons send MIDI remote trigger notes to Cubase to switch articulations. Works on iPad via WebSocket bridge. **Auto track switching** automatically loads the matching expression map when you select a track in Cubase.
+Cubase Articulation Remote (branded as "Cubby Remote") is a Next.js web app that displays Cubase Expression Map articulations as tappable buttons. When tapped, buttons send MIDI remote trigger notes to Cubase to switch articulations. Works on iPad via WebSocket bridge. **Auto track switching** automatically loads the matching expression map when you select a track in Cubase.
+
+**Deployment Options:**
+1. **Standalone Electron App** (Recommended) - System tray app with built-in MIDI server, Windows installer available
+2. **Development Mode** - Run with `npm run all` for local development
 
 ## Architecture
 
@@ -104,12 +108,36 @@ Cubase Articulation Remote is a Next.js web app that displays Cubase Expression 
 ## Commands
 
 ```bash
-npm install     # Install dependencies
-npm run dev     # Start Next.js (port 3000, network accessible)
-npm run midi    # Start MIDI bridge (port 3001)
-npm run all     # Start both servers
-npm run build   # Production build
+npm install            # Install dependencies
+npm run dev            # Start Next.js (port 3000, network accessible)
+npm run midi           # Start MIDI bridge (port 3001)
+npm run all            # Start both servers
+npm run build          # Next.js production build
+npm run electron:dev   # Run Electron app in dev mode
+npm run electron:build # Build installer (requires Windows Developer Mode)
+npm run electron:pack  # Build unpacked app without installer
 ```
+
+## Electron Standalone App
+
+The project includes an Electron wrapper that creates a system tray application:
+
+**Key Files:**
+- `electron/main.js` - Main Electron process, handles tray, MIDI server, and browser
+- `electron-builder.yml` - Build configuration
+- `build/` - Icons and assets for installer
+
+**Build Process:**
+1. Enable Windows Developer Mode (Settings → For developers → Developer Mode ON)
+2. Run `npm run electron:build`
+3. Installer created at `dist/Cubby Remote Setup 1.0.0.exe` (~130 MB)
+
+**Installed App:**
+- Location: `C:\Users\USERNAME\AppData\Local\Programs\cubby-remote\`
+- Expression maps: `...cubby-remote\resources\expression-maps\`
+- System tray menu provides: Add Maps, Open Maps Folder, Show App, Quit
+- Built-in MIDI server (port 3001) starts automatically
+- Auto-opens browser to http://localhost:3000 on launch
 
 ## Windows Setup
 

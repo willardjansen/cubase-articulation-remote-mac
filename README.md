@@ -21,16 +21,28 @@ A web-based remote control for Cubase Expression Maps, designed for iPad/tablet 
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Option 1: Standalone App (Recommended)
+
+**Windows/macOS Installer:**
+
+1. Download the latest release from [Releases](https://github.com/willardjansen/cubase-articulation-remote/releases)
+   - Windows: `Cubby Remote Setup 1.0.0.exe`
+   - macOS: `Cubby Remote.dmg` (coming soon)
+2. Run the installer
+3. Launch "Cubby Remote" from Start Menu or Desktop
+4. The app runs in system tray and auto-opens browser to http://localhost:3000
+
+The standalone app includes the built-in MIDI server - no terminal commands needed!
+
+### Option 2: Development Mode
+
+For developers or advanced users:
 
 ```bash
+# 1. Install dependencies
 npm install
-```
 
-### 2. Start the Servers
-
-```bash
-# Start both servers at once
+# 2. Start both servers at once
 npm run all
 
 # Or separately:
@@ -38,14 +50,12 @@ npm run midi    # Terminal 1: MIDI bridge
 npm run dev     # Terminal 2: Web server
 ```
 
-### 3. Access the App
+### Access the App
 
 | Device | URL |
 |--------|-----|
 | Local browser | http://localhost:3000 |
 | iPad / Network | http://YOUR_IP:3000 |
-
-The MIDI bridge (`npm run midi`) auto-detects and displays your IP address on startup.
 
 **Note:** Your PC can be on Ethernet while iPad is on WiFi - they just need to be on the same network.
 
@@ -123,6 +133,13 @@ copy "cubase-midi-remote\articulation_remote.js" "C:\Program Files\Steinberg\Cub
 
 ### 4. Add Expression Maps to Server
 
+**For Standalone App:**
+- Use the system tray menu: **"Add Expression Maps..."** to import files
+- Or use **"Open Expression Maps Folder"** and copy files manually
+- Location: `C:\Users\USERNAME\AppData\Local\Programs\cubby-remote\resources\expression-maps\`
+
+**For Development Mode:**
+
 Place your `.expressionmap` files in the `expression-maps/` folder:
 
 ```
@@ -176,7 +193,40 @@ The MIDI Remote script installation is similar to Windows, but in the macOS Cuba
 | `npm run dev` | Start web server (network accessible) |
 | `npm run midi` | Start MIDI bridge server |
 | `npm run all` | Start both servers |
-| `npm run build` | Build for production |
+| `npm run build` | Build Next.js for production |
+| `npm run electron:dev` | Run Electron app in development |
+| `npm run electron:build` | Build standalone installer |
+| `npm run electron:pack` | Build unpacked app (no installer) |
+
+## Building from Source
+
+### Windows
+
+**Requirements:**
+- Node.js 18+
+- Windows Developer Mode enabled (for building)
+
+**Enable Developer Mode:**
+1. Settings → Update & Security → For developers
+2. Turn on "Developer Mode"
+3. This allows symlink creation without admin privileges
+
+**Build Installer:**
+```bash
+npm install
+npm run electron:build
+```
+
+The installer will be at `dist/Cubby Remote Setup 1.0.0.exe`
+
+### macOS
+
+```bash
+npm install
+npm run electron:build
+```
+
+The DMG will be at `dist/Cubby Remote-1.0.0.dmg`
 
 ## Troubleshooting
 
