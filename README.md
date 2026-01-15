@@ -2,6 +2,9 @@
 
 A web-based remote control for Cubase Expression Maps, designed for iPad/tablet use. Load your expression maps and tap articulations to switch sounds in Cubase via MIDI.
 
+> **⚠️ This is FREE software.** If you paid for this, you were scammed.
+> Official source: https://github.com/willardjansen/cubase-articulation-remote
+
 ## Features
 
 - **iPad Optimized** - Touch-friendly interface designed for tablets
@@ -257,6 +260,18 @@ MIDI Remote Script ──────▶ loopMIDI "ArticulationRemote"
     └── sw.js                   # Service worker
 ```
 
+## Support
+
+If you find this useful, please consider supporting development:
+
+[![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://paypal.me/willardjansen)
+
 ## License
 
-MIT License
+This project is licensed under the **GNU General Public License v3.0** - see the [LICENSE](LICENSE) file for details.
+
+This means you can use, modify, and distribute this software freely, but any derivative works must also be open source under GPL-3.0.
+
+---
+
+Created by [Willard Jansen](https://github.com/willardjansen)

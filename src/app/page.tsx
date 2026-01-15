@@ -7,6 +7,7 @@ import { ArticulationGrid } from '@/components/ArticulationGrid';
 import { MidiSettings } from '@/components/MidiSettings';
 import { FileDropZone } from '@/components/FileDropZone';
 import { InstrumentLibrary } from '@/components/InstrumentLibrary';
+import About from '@/components/About';
 
 interface ServerMapFile {
   name: string;
@@ -481,6 +482,9 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* About Button */}
+      <About />
     </main>
   );
 }

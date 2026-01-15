@@ -33,7 +33,6 @@ function getLocalIP() {
 // MIDI ports
 let midiOut = null;      // Output to Cubase ("Browser to Cubase")
 let midiIn = null;       // Input from Cubase ("Cubase to Browser")
-let midiPing = null;     // Output to ArticulationRemote (ping to wake up script)
 let selectedOutPortName = null;
 let selectedInPortName = null;
 
@@ -123,24 +122,6 @@ async function initMidi() {
       midiInput.openPort(inputPortIndex);
       midiIn = midiInput;
       console.log(`✅ Input: ${selectedInPortName} (Cubase → Browser)`);
-
-      // Also open ArticulationRemote as OUTPUT to send pings to wake up Cubase script
-      const pingPort = outputs.find(p => p.name.toLowerCase().includes('articulationremote'));
-      if (pingPort) {
-        try {
-          midiPing = JZZ().openMidiOut(pingPort.name);
-          console.log(`✅ Ping output: ${pingPort.name} (wake up Cubase script)`);
-
-          // Send periodic pings to keep the Cubase script active
-          setInterval(() => {
-            if (midiPing) {
-              midiPing.send([0xBF, 100, 1]); // CC 100 on ch16 = ping
-            }
-          }, 500); // Every 500ms
-        } catch (e) {
-          console.log(`⚠️  Could not open ping output: ${e.message}`);
-        }
-      }
     } catch (e) {
       console.error(`❌ Failed to open MIDI input: ${e.message}`);
     }
