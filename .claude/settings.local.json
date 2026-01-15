@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node -e:*)",
+      "Bash(node --check:*)",
+      "Bash(npm install:*)",
+      "Bash(dir \"C:\\\\Program Files\\\\Steinberg\\\\Cubase 15\\\\midiremote_factory_scripts\\\\Public\")",
+      "Bash(dir \"C:\\\\Program Files\\\\Steinberg\\\\Cubase 15\\\\midiremote_factory_scripts\\\\Public\\\\articulation\")",
+      "Bash(dir \"C:\\\\Program Files\\\\Steinberg\\\\Cubase 15\\\\midiremote_factory_scripts\\\\Public\\\\articulation\\\\remote\")",
+      "Bash(dir \"C:\\\\Program Files\\\\Steinberg\\\\Cubase 15\\\\midiremote_factory_scripts\" /s /b)",
+      "Bash(findstr:*)",
+      "Bash(test:*)",
+      "WebFetch(domain:steinbergmedia.github.io)",
+      "WebSearch",
+      "Bash(del \"\\\\?\\\\C:\\\\Users\\\\willa\\\\dev\\\\cubase-articulation-remote\\\\nul\")",
+      "Bash(git -C \"C:\\\\Users\\\\willa\\\\dev\\\\cubase-articulation-remote\" status --short)",
+      "Bash(cmd.exe /c \"del \\\\\\\\?\\\\C:\\\\Users\\\\willa\\\\dev\\\\cubase-articulation-remote\\\\nul\")",
+      "Bash(python -c \"import os; os.remove\\(r''\\\\\\\\?\\\\C:\\\\Users\\\\willa\\\\dev\\\\cubase-articulation-remote\\\\nul''\\)\")",
+      "Bash(python -c \"import os; os.unlink\\(r''C:\\\\Users\\\\willa\\\\dev\\\\cubase-articulation-remote\\\\nul''\\)\")",
+      "Bash(git -C \"C:\\\\Users\\\\willa\\\\dev\\\\cubase-articulation-remote\" add -A)"
+    ]
+  }
+}

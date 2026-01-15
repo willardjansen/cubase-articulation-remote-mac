@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Enable static export for iPad deployment
-  output: 'export',
-  trailingSlash: true,
+  // Requires server mode for API routes (expression map loading)
 }
 
 module.exports = nextConfig

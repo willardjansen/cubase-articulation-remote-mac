@@ -46,7 +46,7 @@ export async function GET(request: Request) {
 
     const maps: MapFile[] = [];
 
-    function scanDirectory(dir: string, relativePath: string = '') {
+    const scanDirectory = (dir: string, relativePath: string = ''): void => {
       const items = fs.readdirSync(dir);
 
       for (const item of items) {
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
           });
         }
       }
-    }
+    };
 
     scanDirectory(EXPRESSION_MAPS_DIR);
 

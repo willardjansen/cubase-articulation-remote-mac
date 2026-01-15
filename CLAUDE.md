@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Cubase Articulation Remote is a Next.js web app that displays Cubase Expression Map articulations as tappable buttons. When tapped, buttons send MIDI remote trigger notes to Cubase to switch articulations. Works on iPad via WebSocket bridge.
+Cubase Articulation Remote is a Next.js web app that displays Cubase Expression Map articulations as tappable buttons. When tapped, buttons send MIDI remote trigger notes to Cubase to switch articulations. Works on iPad via WebSocket bridge. **Auto track switching** automatically loads the matching expression map when you select a track in Cubase.
 
 ## Architecture
 
@@ -10,8 +10,8 @@ Cubase Articulation Remote is a Next.js web app that displays Cubase Expression 
 ┌─────────────────────────────────────────────────────────────┐
 │                    Windows/Mac Host                          │
 │  ┌─────────────┐    ┌──────────────┐    ┌───────────────┐  │
-│  │  Next.js    │    │ MIDI Bridge  │    │    Cubase     │  │
-│  │  Web App    │───▶│  Server      │───▶│               │  │
+│  │  Next.js    │◀──▶│ MIDI Bridge  │◀──▶│    Cubase     │  │
+│  │  Web App    │    │  Server      │    │               │  │
 │  │  :3000      │    │  :3001       │    │               │  │
 │  └─────────────┘    └──────────────┘    └───────────────┘  │
 │         ▲                  ▲                   ▲            │
@@ -20,9 +20,13 @@ Cubase Articulation Remote is a Next.js web app that displays Cubase Expression 
           │                  │                   │
      ┌────┴──────────────────┴────┐         loopMIDI (Win)
      │         iPad               │         IAC Driver (Mac)
-     │   Safari Browser           │
+     │   Safari/Chrome Browser    │
      └────────────────────────────┘
 ```
+
+**Data flows:**
+- **Articulation switching (iPad → Cubase):** WebSocket → midi-server → "Browser to Cubase" loopMIDI → Cubase
+- **Track switching (Cubase → iPad):** Cubase MIDI Remote script → "ArticulationRemote" loopMIDI → midi-server → WebSocket → Web App
 
 ## Tech Stack
 
@@ -30,7 +34,7 @@ Cubase Articulation Remote is a Next.js web app that displays Cubase Expression 
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS with custom Cubase-themed colors
 - **MIDI**: Web MIDI API + WebSocket fallback for iPad
-- **MIDI Bridge**: Node.js with `jzz` and `ws` libraries
+- **MIDI Bridge**: Node.js with `jzz`, `midi`, and `ws` libraries
 - **Storage**: localStorage for persistence
 
 ## Project Structure
@@ -38,7 +42,7 @@ Cubase Articulation Remote is a Next.js web app that displays Cubase Expression 
 ```
 ├── src/
 │   ├── app/
-│   │   ├── page.tsx              # Main app component
+│   │   ├── page.tsx              # Main app component (track switching logic here)
 │   │   ├── layout.tsx            # Root layout with PWA meta
 │   │   ├── globals.css           # Tailwind + custom CSS
 │   │   └── api/
@@ -53,9 +57,11 @@ Cubase Articulation Remote is a Next.js web app that displays Cubase Expression 
 │   │   └── ServiceWorkerRegistration.tsx
 │   └── lib/
 │       ├── expressionMapParser.ts   # XML parsing & merging
-│       └── midiHandler.ts           # Web MIDI + WebSocket
+│       └── midiHandler.ts           # Web MIDI + WebSocket + track name listeners
+├── cubase-midi-remote/
+│   └── articulation_remote.js    # Cubase MIDI Remote script (copy to factory scripts)
 ├── expression-maps/              # Server-side .expressionmap files
-├── midi-server.js                # WebSocket MIDI bridge
+├── midi-server.js                # WebSocket MIDI bridge (bidirectional)
 ├── public/
 │   ├── icon.svg
 │   ├── manifest.json
@@ -68,23 +74,30 @@ Cubase Articulation Remote is a Next.js web app that displays Cubase Expression 
 ### 1. MIDI Handler (`src/lib/midiHandler.ts`)
 - Tries Web MIDI API first
 - Falls back to WebSocket connection to `ws://HOST:3001`
-- `useWebSocket` flag determines routing
+- `trackNameListeners` receive track name changes from Cubase
 - `sendMessages()` routes to appropriate output
 
 ### 2. MIDI Bridge Server (`midi-server.js`)
 - Node.js WebSocket server on port 3001
-- Receives JSON MIDI messages from iPad
-- Forwards to local MIDI output via `jzz` library
-- Auto-selects loopMIDI/IAC Driver
+- **Bidirectional:**
+  - Receives MIDI from browser → forwards to "Browser to Cubase" via `jzz`
+  - Receives MIDI from "ArticulationRemote" via `midi` package → broadcasts track name to browsers
+- Auto-detects local IP and displays it on startup
 
-### 3. Expression Map Parser (`src/lib/expressionMapParser.ts`)
+### 3. Cubase MIDI Remote Script (`cubase-midi-remote/articulation_remote.js`)
+- Installed to: `C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote\`
+- Sends track name when you select a track in Cubase
+- Uses MIDI CC on channel 16 to encode track name as bytes
+
+### 4. Expression Map Parser (`src/lib/expressionMapParser.ts`)
 - Parses Cubase `.expressionmap` XML files
 - Extracts `PSlotThruTrigger` remote trigger notes
 - `autoAssignRemoteTriggers()` assigns C-2 upward for missing remotes
 
-### 4. Server Maps API (`src/app/api/expression-maps/route.ts`)
+### 5. Server Maps API (`src/app/api/expression-maps/route.ts`)
 - Lists .expressionmap files from `expression-maps/` folder
 - Serves file content for loading
+- Web app auto-loads matching map when track changes
 
 ## Commands
 
@@ -101,29 +114,86 @@ npm run build   # Production build
 ### Prerequisites
 1. Install Node.js v18+
 2. Install loopMIDI: https://www.tobias-erichsen.de/software/loopmidi.html
-3. Create port named "Browser to Cubase"
+3. Create **two** ports in loopMIDI:
+   - `Browser to Cubase` (for sending articulations TO Cubase)
+   - `ArticulationRemote` (for receiving track names FROM Cubase)
 
 ### Running
 ```bash
 npm install
 npm run midi    # Terminal 1
 npm run dev     # Terminal 2
+# Or: npm run all
 ```
 
-### Cubase Setup
-1. Studio > Studio Setup > MIDI Port Setup
-2. Enable loopMIDI port
+### Cubase Setup (IMPORTANT - Prevent MIDI Feedback Loop)
+
+1. **Disable MIDI Thru** (required to prevent feedback):
+   - Preferences > MIDI > uncheck **"MIDI Thru Active"**
+
+2. **Configure MIDI Port Setup** (Studio > Studio Setup > MIDI Port Setup):
+   - "Browser to Cubase" **Input**:
+     - State: Active
+     - In 'All MIDI Inputs': **Checked**
+   - "Browser to Cubase" **Output**:
+     - Visible: **Unchecked** (prevents feedback loop)
+
 3. Assign Expression Maps to tracks
 
+**Why this matters:** On Windows with loopMIDI, if MIDI Thru is enabled and the output port is visible, Cubase creates a feedback loop that causes it to hang. macOS IAC Driver doesn't have this issue.
+
 ### iPad Access
-1. Find Windows IP: `ipconfig`
-2. iPad Safari: `http://WINDOWS_IP:3000`
+1. Run `npm run midi` - it auto-detects and displays your IP
+2. iPad Safari/Chrome: `http://YOUR_IP:3000` (shown in terminal)
+
+**Note:** PC can be on Ethernet while iPad is on WiFi - they just need to be on the same network (router).
+
+### Auto Track Switching Setup
+
+This feature automatically loads the matching expression map when you select a track in Cubase.
+
+1. **Install the MIDI Remote Script** (requires Admin PowerShell):
+   ```powershell
+   mkdir "C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote" -Force
+   copy "cubase-midi-remote\articulation_remote.js" "C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote\"
+   ```
+
+2. **Restart Cubase** (or open MIDI Remote Script Console and click "Reload Scripts")
+
+3. **Add the device in Cubase MIDI Remote Manager**:
+   - Open Studio > MIDI Remote Manager
+   - Click **"+ Add MIDI Controller Surface"**
+   - Select Vendor: **articulation**, Model: **remote**
+   - The ports should auto-detect to **ArticulationRemote**
+   - If not, manually set both Input and Output to ArticulationRemote
+
+4. **Verify in Script Console**:
+   - Open the MIDI Remote Script Console (separate window)
+   - At the bottom, under "MIDI Controller Scripts", confirm `remote` shows `ArticulationRemote` for both ports
+   - When switching tracks, you should see `ART-REMOTE: Track = "TrackName"` messages
+
+5. **Place expression maps on server**:
+   - Put `.expressionmap` files in the `expression-maps/` folder
+   - Name them to match your Cubase track names (e.g., `Amati Viola.expressionmap`)
+
+6. **How it works**:
+   - Cubase MIDI Remote script detects track selection change
+   - Sends track name via CC messages on channel 16 to ArticulationRemote
+   - midi-server.js receives via the `midi` npm package
+   - Broadcasts to web app via WebSocket
+   - Web app searches server maps for matching name and loads it
+
+### Track Name Protocol (CC on channel 16 / 0xBF)
+- CC 119: Start marker + name length
+- CC 118: Character bytes (sent repeatedly)
+- CC 117: End marker (value 127)
 
 ## macOS Setup
 
 ### Prerequisites
 1. Enable IAC Driver in Audio MIDI Setup
 2. Add bus "Browser to Cubase"
+3. For auto track switching, add another bus "ArticulationRemote"
 
 ### Running
 Same as Windows, IAC Driver auto-selected.
@@ -131,17 +201,19 @@ Same as Windows, IAC Driver auto-selected.
 ## Current State (Jan 2026)
 
 ### Working
-- ✅ Load .expressionmap files via drag-drop
-- ✅ Parse and display articulations
-- ✅ Tap to send MIDI remote triggers
-- ✅ WebSocket bridge for iPad
-- ✅ Server-side expression map loading
-- ✅ Multi-map merging
-- ✅ Search/filter articulations
+- Load .expressionmap files via drag-drop
+- Parse and display articulations
+- Tap to send MIDI remote triggers
+- WebSocket bridge for iPad
+- Server-side expression map loading
+- Multi-map merging
+- Search/filter articulations
+- **Auto track switching** - select track in Cubase, web app loads matching expression map
+- Works on both PC browser and iPad
 
 ### Known Issues
-- Server Maps tab slow on older iPads (works on Mac)
-- Occasional duplicate MIDI messages (minor)
+- Cubase may show duplicate MIDI Remote devices after modifying scripts (delete MIDI Remote folder and restart to fix)
+- Expression map names must match track names for auto-switching (partial matching supported)
 
 ## Code Patterns
 
@@ -160,6 +232,22 @@ const handleClick = () => {
 };
 ```
 
+### Track Name Callback in Cubase Script (CRITICAL PATTERN)
+```javascript
+// IMPORTANT: Assign mOnTitleChange directly to the HOST VALUE, not to a binding!
+var trackVolume = page.mHostAccess.mTrackSelection.mMixerChannel.mValue.mVolume;
+
+// Must create a binding for the callback to fire
+page.makeValueBinding(fader.mSurfaceValue, trackVolume);
+
+// Use .bind() to capture midiOutput in callback context
+trackVolume.mOnTitleChange = (function(activeDevice, activeMapping, title) {
+    // Send track name via MIDI
+    this.midiOutput.sendMidi(activeDevice, [0xBF, 119, len]);
+    // ... send character bytes ...
+}).bind({ midiOutput: midiOutput });
+```
+
 ### WebSocket Fallback (midiHandler.ts)
 ```typescript
 if (this.useWebSocket && this.webSocket?.readyState === WebSocket.OPEN) {
@@ -172,13 +260,29 @@ if (this.useWebSocket && this.webSocket?.readyState === WebSocket.OPEN) {
 ## Testing Checklist
 
 1. [ ] `npm install` succeeds
-2. [ ] `npm run midi` connects to loopMIDI/IAC Driver
+2. [ ] `npm run midi` connects to loopMIDI/IAC Driver (shows both ports)
 3. [ ] `npm run dev` starts on port 3000
 4. [ ] Drop .expressionmap file loads
-5. [ ] Tap articulation → MIDI sent (check console)
-6. [ ] Cubase switches articulation
-7. [ ] iPad connects via WebSocket
-8. [ ] Server Maps lists files from expression-maps/
+5. [ ] Tap articulation → MIDI sent → Cubase switches articulation
+6. [ ] iPad connects via WebSocket and can switch articulations
+7. [ ] Server Maps lists files from expression-maps/
+8. [ ] **Auto track switching**: Select track in Cubase → Script Console shows `ART-REMOTE: Track = "..."` → loopMIDI shows activity → midi-server shows `RAW MIDI IN` → web app loads matching map
+
+## Debugging Auto Track Switching
+
+If track switching doesn't work, check each step:
+
+1. **Script Console**: Do you see `ART-REMOTE: Track = "TrackName"` when switching tracks?
+   - No → Script not firing. Check device is connected in MIDI Remote Manager.
+
+2. **loopMIDI**: Does ArticulationRemote show activity when switching tracks?
+   - No → MIDI not being sent. Check ports are set correctly in Script Console (bottom panel).
+
+3. **midi-server terminal**: Do you see `RAW MIDI IN: [191, 119, ...]`?
+   - No → midi-server not receiving. Check it's listening on ArticulationRemote.
+
+4. **Web app**: Does the expression map change?
+   - No → Check server maps are loaded, check matching logic (names must match).
 
 ## Notes for AI Assistants
 
@@ -186,4 +290,7 @@ if (this.useWebSocket && this.webSocket?.readyState === WebSocket.OPEN) {
 - **Merged maps**: Each articulation has its own `midiChannel`
 - **iPad support**: Must work via WebSocket when Web MIDI unavailable
 - **Test on Windows**: loopMIDI required for virtual MIDI
+- **MIDI Remote API**: Use `hostValue.mOnTitleChange` NOT `binding.mOnTitleChange`
+- **MIDI Remote sendMidi**: Use array syntax `sendMidi(activeDevice, [0xBF, 119, len])` and `.bind({ midiOutput })` pattern
+- **Factory scripts location**: `C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\` (requires admin)
 - Run `npm run build` to verify no TypeScript errors

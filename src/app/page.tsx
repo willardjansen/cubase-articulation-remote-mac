@@ -1,12 +1,18 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { ExpressionMap, autoAssignRemoteTriggers, hasUnassignedRemotes, mergeExpressionMaps } from '@/lib/expressionMapParser';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { ExpressionMap, parseExpressionMap, autoAssignRemoteTriggers, hasUnassignedRemotes, mergeExpressionMaps } from '@/lib/expressionMapParser';
 import { midiHandler, MidiState } from '@/lib/midiHandler';
 import { ArticulationGrid } from '@/components/ArticulationGrid';
 import { MidiSettings } from '@/components/MidiSettings';
 import { FileDropZone } from '@/components/FileDropZone';
 import { InstrumentLibrary } from '@/components/InstrumentLibrary';
+
+interface ServerMapFile {
+  name: string;
+  path: string;
+  folder: string;
+}
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -18,6 +24,21 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [columns, setColumns] = useState(4);
   const [buttonSize, setButtonSize] = useState<'small' | 'medium' | 'large'>('medium');
+  const serverMapsRef = useRef<ServerMapFile[]>([]);
+  const loadingTrackRef = useRef<string | null>(null);
+
+  // Fetch server maps list on mount
+  useEffect(() => {
+    fetch('/api/expression-maps')
+      .then(res => res.json())
+      .then(data => {
+        serverMapsRef.current = data.maps || [];
+        console.log('[App] Loaded server maps list:', serverMapsRef.current.length, 'maps');
+      })
+      .catch(err => {
+        console.error('[App] Failed to fetch server maps:', err);
+      });
+  }, []);
 
   // Mark as mounted (client-side only)
   useEffect(() => {
@@ -30,6 +51,109 @@ export default function Home() {
     const unsubscribe = midiHandler.subscribe(setMidiState);
     return unsubscribe;
   }, []);
+
+  // Subscribe to track name changes from Cubase
+  useEffect(() => {
+    const unsubscribe = midiHandler.onTrackName(async (trackName) => {
+      console.log('[App] Track changed in Cubase:', trackName);
+
+      // First try to find among already-loaded maps
+      const matchIndex = findMatchingMapIndex(trackName, expressionMaps);
+      if (matchIndex >= 0 && matchIndex !== activeMapIndex) {
+        console.log(`[App] Auto-switching to loaded map: ${expressionMaps[matchIndex].name}`);
+        setActiveMapIndex(matchIndex);
+        return;
+      }
+
+      // If no loaded map matches, search server maps
+      if (loadingTrackRef.current === trackName) return; // Already loading this track
+
+      const serverMatch = findMatchingServerMap(trackName, serverMapsRef.current);
+      if (serverMatch) {
+        console.log(`[App] Loading server map: ${serverMatch.name}`);
+        loadingTrackRef.current = trackName;
+        try {
+          const res = await fetch(`/api/expression-maps?file=${encodeURIComponent(serverMatch.path)}`);
+          const content = await res.text();
+          let map = parseExpressionMap(content, serverMatch.name);
+          if (hasUnassignedRemotes(map)) {
+            map = autoAssignRemoteTriggers(map);
+          }
+          // Replace current maps with the loaded one
+          setExpressionMaps([map]);
+          setActiveMapIndex(0);
+          console.log(`[App] Loaded and switched to: ${map.name}`);
+        } catch (e) {
+          console.error('[App] Failed to load server map:', e);
+        } finally {
+          loadingTrackRef.current = null;
+        }
+      } else {
+        console.log('[App] No matching server map found for:', trackName);
+      }
+    });
+    return unsubscribe;
+  }, [expressionMaps, activeMapIndex]);
+
+  // Find a matching server map for a track name
+  const findMatchingServerMap = (trackName: string, serverMaps: ServerMapFile[]): ServerMapFile | null => {
+    if (!trackName || serverMaps.length === 0) return null;
+
+    const normalizedTrack = trackName.toLowerCase().trim();
+
+    // Try exact match first
+    let match = serverMaps.find(m => m.name.toLowerCase() === normalizedTrack);
+    if (match) return match;
+
+    // Try if track name contains map name or vice versa
+    match = serverMaps.find(m =>
+      normalizedTrack.includes(m.name.toLowerCase()) ||
+      m.name.toLowerCase().includes(normalizedTrack)
+    );
+    if (match) return match;
+
+    // Try matching first word
+    const trackFirstWord = normalizedTrack.split(/[\s-_]/)[0];
+    match = serverMaps.find(m => {
+      const mapFirstWord = m.name.toLowerCase().split(/[\s-_]/)[0];
+      return trackFirstWord === mapFirstWord ||
+             m.name.toLowerCase().startsWith(trackFirstWord) ||
+             trackFirstWord.startsWith(mapFirstWord);
+    });
+    if (match) return match;
+
+    return null;
+  };
+
+  // Find the best matching expression map for a track name
+  const findMatchingMapIndex = (trackName: string, maps: ExpressionMap[]): number => {
+    if (!trackName || maps.length === 0) return -1;
+
+    const normalizedTrack = trackName.toLowerCase().trim();
+
+    // Try exact match first
+    let index = maps.findIndex(m => m.name.toLowerCase() === normalizedTrack);
+    if (index >= 0) return index;
+
+    // Try if track name contains map name or vice versa
+    index = maps.findIndex(m =>
+      normalizedTrack.includes(m.name.toLowerCase()) ||
+      m.name.toLowerCase().includes(normalizedTrack)
+    );
+    if (index >= 0) return index;
+
+    // Try matching first word (instrument name often comes first)
+    const trackFirstWord = normalizedTrack.split(/[\s-_]/)[0];
+    index = maps.findIndex(m => {
+      const mapFirstWord = m.name.toLowerCase().split(/[\s-_]/)[0];
+      return trackFirstWord === mapFirstWord ||
+             m.name.toLowerCase().startsWith(trackFirstWord) ||
+             trackFirstWord.startsWith(mapFirstWord);
+    });
+    if (index >= 0) return index;
+
+    return -1;
+  };
 
   // Load saved maps from localStorage
   useEffect(() => {

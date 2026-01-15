@@ -2,16 +2,14 @@
 
 ## Requirements
 
-- **macOS** or **Windows** computer running Cubase 12+
+- **Windows** or **macOS** computer running Cubase 12+
 - **Node.js** 18+ (for running the app locally)
-- **iPad** with iOS 16.4+ (or any modern browser with Web MIDI support)
-- **Network MIDI** or **IAC Driver** for MIDI routing
+- **iPad** or tablet with modern browser (Safari/Chrome)
+- **loopMIDI** (Windows) or **IAC Driver** (macOS) for MIDI routing
 
 ---
 
 ## Step 1: Install the Web App
-
-### Option A: Run Locally (Recommended for Development)
 
 ```bash
 # Clone or download the project
@@ -20,58 +18,26 @@ cd cubase-articulation-remote
 # Install dependencies
 npm install
 
-# Start the development server
-npm run dev
+# Start both servers
+npm run all
 ```
 
 The app runs at **http://localhost:3000**
 
-### Option B: Build for Production
-
-```bash
-npm run build
-npm run start
-```
-
-### Option C: Deploy to a Server
-
-Build the app and deploy the `.next` folder to any Node.js hosting service (Vercel, Railway, etc.)
-
 ---
 
-## Step 2: Set Up MIDI Routing
+## Step 2: Set Up Virtual MIDI Ports
 
-The app needs to send MIDI to Cubase. You need a virtual MIDI bus.
-
-### Windows: loopMIDI (Recommended)
-
-loopMIDI creates virtual MIDI ports on Windows. It's free and widely used.
+### Windows: loopMIDI
 
 1. **Download** [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html)
 2. **Install** and run loopMIDI
-3. Click the **+** button to create a new port
-4. Name it **"Browser to Cubase"**
-5. The port appears in the list - it's now active
-6. loopMIDI runs in the system tray - keep it running while using the app
+3. Create **two** ports by clicking the **+** button:
+   - `Browser to Cubase` (for sending articulations TO Cubase)
+   - `ArticulationRemote` (for receiving track names FROM Cubase)
+4. Keep loopMIDI running (it stays in the system tray)
 
-**Tip:** Add loopMIDI to Windows Startup so it's always available:
-- Right-click loopMIDI in system tray → "Autostart"
-
-### Windows: Network MIDI (for iPad/Remote Device)
-
-To use the app from an iPad or another device over WiFi:
-
-1. **Download** [rtpMIDI](https://www.tobias-erichsen.de/software/rtpmidi.html)
-2. **Install** rtpMIDI (requires restart)
-3. Open rtpMIDI from Start menu
-4. In **"My Sessions"**, click **+** to create a session
-5. Name it **"Articulation Remote"**
-6. Check the box to **enable** the session
-7. Note the session name for connecting from iPad
-
-**On iPad:**
-- Ensure iPad is on the same WiFi network
-- The network MIDI session will appear in the app's MIDI settings
+**Tip:** Add loopMIDI to Windows Startup: Right-click in system tray → "Autostart"
 
 ### macOS: IAC Driver
 
@@ -79,93 +45,131 @@ To use the app from an iPad or another device over WiFi:
 2. Go to **Window → Show MIDI Studio**
 3. Double-click **IAC Driver**
 4. Check **"Device is online"**
-5. Optionally rename the bus to "Browser to Cubase"
-
-### macOS: Network MIDI (for iPad)
-
-1. In **Audio MIDI Setup** → **Window → Show MIDI Studio**
-2. Double-click **Network** icon
-3. Create a new session (e.g., "Articulation Remote")
-4. Enable the session
-5. On iPad, connect to the same WiFi network
+5. Add two buses:
+   - `Browser to Cubase`
+   - `ArticulationRemote`
 
 ---
 
 ## Step 3: Configure Cubase
 
-### Set Track MIDI Input
+### Windows (IMPORTANT - Prevent MIDI Feedback Loop)
 
-1. Select your instrument track with the Expression Map
-2. In the Inspector, set **MIDI Input** to receive from:
-   - "IAC Driver Bus 1" (macOS)
-   - "loopMIDI Port" (Windows)
-   - Or your Network MIDI session
-3. Keep "All MIDI Inputs" if you also want keyboard input
+1. **Disable MIDI Thru:**
+   - Cubase → Preferences → MIDI → **Uncheck "MIDI Thru Active"**
 
-### Verify Expression Map Remote Triggers
+2. **Configure MIDI Port Setup:**
+   - Studio → Studio Setup → MIDI Port Setup
+   - "Browser to Cubase" **Input**: State=Active, In 'All MIDI Inputs'=**Checked**
+   - "Browser to Cubase" **Output**: **Uncheck "Visible"** (critical!)
 
-1. Open **Studio → Expression Map Setup**
-2. Check that your articulations have **Trigger** notes assigned
-3. If "Trigger" column shows "---", the app will auto-assign notes
+3. Click **Apply**
+
+> **Warning:** Without step 2, Cubase will freeze due to a MIDI feedback loop. This is a Windows/loopMIDI specific issue.
+
+### macOS
+
+1. In **MIDI Port Setup**, check "In 'All MIDI Inputs'" for IAC Driver
+2. No special configuration needed - IAC Driver doesn't have the feedback issue
+
+### Both Platforms
+
+- Assign Expression Maps to your instrument tracks
+- Ensure tracks have MIDI Input set to receive from the virtual port
 
 ---
 
-## Step 4: Install Cubase MIDI Remote Script (Optional)
+## Step 4: Install Cubase MIDI Remote Script
 
-For auto-switching instruments when you change tracks in Cubase:
+This script enables **auto track switching** - the web app automatically loads the matching expression map when you select a track in Cubase.
 
 ### Windows
 
-1. Open File Explorer
-2. Navigate to:
-   ```
-   C:\Users\[YourUsername]\Documents\Steinberg\Cubase\MIDI Remote\Driver Scripts\Local\
-   ```
-   (Create the `Local` folder if it doesn't exist)
-3. Copy `CubaseArticulationRemote.js` from the project's `cubase-midi-remote` folder
-4. Restart Cubase
+**Run PowerShell as Administrator:**
 
-**Or via Command Prompt:**
-```cmd
-copy cubase-midi-remote\CubaseArticulationRemote.js "%USERPROFILE%\Documents\Steinberg\Cubase\MIDI Remote\Driver Scripts\Local\"
+```powershell
+# Create the folder structure
+mkdir "C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote" -Force
+
+# Copy the script
+copy "cubase-midi-remote\articulation_remote.js" "C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote\"
 ```
 
 ### macOS
+
 ```bash
-cp cubase-midi-remote/CubaseArticulationRemote.js \
-   ~/Documents/Steinberg/Cubase/MIDI\ Remote/Driver\ Scripts/Local/
+# Create the folder structure
+sudo mkdir -p "/Applications/Cubase 15.app/Contents/midiremote_factory_scripts/Public/articulation/remote"
+
+# Copy the script
+sudo cp cubase-midi-remote/articulation_remote.js \
+   "/Applications/Cubase 15.app/Contents/midiremote_factory_scripts/Public/articulation/remote/"
 ```
 
-Then restart Cubase.
+### Configure in Cubase
+
+1. **Restart Cubase** (or open MIDI Remote Script Console and click "Reload Scripts")
+2. Open **Studio → MIDI Remote Manager**
+3. Click **"+ Add MIDI Controller Surface"**
+4. Select **Vendor: articulation**, **Model: remote**
+5. Ports should auto-detect to **ArticulationRemote**
+   - If not, manually set Input and Output to ArticulationRemote
+6. Click to activate the device
 
 ### Verify Installation
 
-1. Open Cubase
-2. Go to **Studio → MIDI Remote Manager**
-3. You should see "Articulation Remote - Track Switcher" in the list
-4. Configure it to use your loopMIDI/IAC Driver port
+1. Open the **MIDI Remote Script Console** (find it via Studio menu or search)
+2. At the bottom, under "MIDI Controller Scripts", confirm `remote` shows `ArticulationRemote` for both Input and Output ports
+3. Switch tracks in Cubase - you should see messages like:
+   ```
+   ART-REMOTE: Track = "Violin"
+   ART-REMOTE: SENDING "Violin"
+   ```
 
 ---
 
-## Step 5: Connect the App
+## Step 5: Add Expression Maps
 
-1. Open the app in your browser (http://localhost:3000)
-2. Click the **gear icon** (MIDI Settings)
-3. Select your MIDI output (IAC Driver, loopMIDI, or Network)
-4. Optionally select MIDI input for auto-switching
-5. Close settings
+Place your `.expressionmap` files in the `expression-maps/` folder:
+
+```
+expression-maps/
+├── Strings/
+│   ├── Amati Viola.expressionmap
+│   └── Guarneri Violin.expressionmap
+├── Brass/
+│   └── Trumpets.expressionmap
+└── Woodwinds/
+    └── Flute.expressionmap
+```
+
+**Important:** Name files to match your Cubase track names. The app uses fuzzy matching:
+- Exact match: Track "Amati Viola" matches "Amati Viola.expressionmap"
+- Contains: Track "Amati Viola Section" matches "Amati Viola.expressionmap"
+- First word: Track "Violin Solo" matches "Violin.expressionmap"
 
 ---
 
-## Step 6: Add to iPad Home Screen (PWA)
+## Step 6: Connect from iPad
 
-1. Open Safari on iPad
-2. Navigate to the app URL
-3. Tap **Share** button → **Add to Home Screen**
-4. Name it "Cubase Remote"
-5. Tap **Add**
+1. Run `npm run all` on your computer
+2. Note the IP address shown in the terminal (e.g., `192.168.1.40`)
+3. On iPad, open Safari or Chrome
+4. Navigate to `http://YOUR_IP:3000` (e.g., `http://192.168.1.40:3000`)
 
-The app now launches in full-screen mode without Safari UI.
+**Network Notes:**
+- PC can be on Ethernet, iPad on WiFi - just need same network
+- Firewall may need to allow ports 3000 and 3001
+- Use 5GHz WiFi for lower latency
+
+### Add to Home Screen (PWA)
+
+1. In Safari, tap **Share** button
+2. Tap **"Add to Home Screen"**
+3. Name it "Cubase Remote"
+4. Tap **Add**
+
+The app now launches full-screen without browser UI.
 
 ---
 
@@ -174,49 +178,75 @@ The app now launches in full-screen mode without Safari UI.
 ### "No MIDI" / No devices shown
 
 **Windows:**
-- Ensure **loopMIDI** is running (check system tray)
-- Use **Chrome** or **Edge** (Firefox doesn't support Web MIDI)
-- Try restarting the browser after starting loopMIDI
+- Ensure loopMIDI is running (check system tray)
+- Use Chrome or Edge (Firefox doesn't support Web MIDI)
+- Restart browser after starting loopMIDI
 
 **macOS:**
 - Ensure IAC Driver is online in Audio MIDI Setup
 
 **iPad:**
-- Use Safari (Chrome/Firefox iOS don't support Web MIDI)
-- May need to enable in Settings → Safari → Advanced
+- iPad uses WebSocket, not Web MIDI - just needs MIDI bridge running
 
-### App doesn't connect to Cubase
+### Cubase hangs/freezes (Windows)
 
-**Windows:**
-- Verify loopMIDI port exists and is named correctly
-- In Cubase: Studio → Studio Setup → MIDI Port Setup
-- Ensure the loopMIDI port is **visible** and **enabled**
-- Check "In 'All MIDI Inputs'" is checked for the port
+MIDI feedback loop. Fix:
+1. Preferences → MIDI → Uncheck "MIDI Thru Active"
+2. Studio Setup → MIDI Port Setup → Uncheck "Visible" for "Browser to Cubase" **Output**
 
-**General:**
-- Verify Cubase track MIDI input is set to receive from the virtual port
-- Try the "Send Test Note" button in MIDI Settings
-- Check Cubase MIDI activity indicator in Transport bar
+### Auto track switching not working
 
-### Articulations don't switch
-- Verify Expression Map has remote triggers assigned
-- Check the trigger notes match what the app sends
-- Look at browser console (F12) for MIDI output logs
-- In Cubase, check the Expression Map Setup → Trigger column
+Check each step in order:
 
-### loopMIDI port not appearing (Windows)
-- Run loopMIDI as Administrator
-- Try uninstalling and reinstalling loopMIDI
-- Restart Windows after installation
-- Check Windows MIDI services are running
+1. **Script Console**: See `ART-REMOTE: Track = "..."` when switching tracks?
+   - No → Device not connected. Check MIDI Remote Manager.
 
-### Network MIDI latency
-- Use loopMIDI/IAC Driver for lowest latency on same machine
-- For iPad, ensure strong WiFi signal (5GHz preferred)
-- Network MIDI adds ~5-20ms latency
-- rtpMIDI on Windows may have higher latency than macOS Network MIDI
+2. **loopMIDI**: ArticulationRemote port showing activity?
+   - No → MIDI not being sent. Check ports in Script Console (bottom panel).
 
-### Browser blocks MIDI access
-- Chrome/Edge may require HTTPS for MIDI access on some systems
-- Try running in localhost (which is always allowed)
-- Check browser console for permission errors
+3. **midi-server terminal**: See `🔵 RAW MIDI IN: [191, 119, ...]`?
+   - No → midi-server not receiving. Restart `npm run midi`.
+
+4. **Web app**: Expression map loads?
+   - No → Check file names match track names. Check browser console for errors.
+
+### Articulations not switching in Cubase
+
+1. Verify Expression Map is assigned to the track (Inspector)
+2. Check track MIDI Input includes the loopMIDI/IAC port
+3. Verify remote triggers are assigned in Expression Map Setup
+4. Check browser console (F12) for MIDI output logs
+
+### Duplicate MIDI Remote devices in Cubase
+
+This can happen after modifying scripts. Fix:
+1. Close Cubase
+2. Delete folder: `C:\Users\[Username]\Documents\Steinberg\Cubase\MIDI Remote`
+3. Restart Cubase
+4. Re-add the articulation/remote device
+
+### iPad not receiving track changes
+
+1. Verify `npm run midi` is running
+2. Check iPad is on same network as computer
+3. Refresh the web app on iPad
+4. Check midi-server shows "Client connected" when iPad opens the app
+
+---
+
+## Quick Reference
+
+| What | Where |
+|------|-------|
+| Web app | http://localhost:3000 or http://YOUR_IP:3000 |
+| MIDI bridge | Port 3001 (WebSocket) |
+| Expression maps | `expression-maps/` folder |
+| MIDI Remote script | `C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote\` |
+| loopMIDI ports | "Browser to Cubase" + "ArticulationRemote" |
+
+| Command | Description |
+|---------|-------------|
+| `npm run all` | Start both servers |
+| `npm run dev` | Start web server only |
+| `npm run midi` | Start MIDI bridge only |
+| `npm run build` | Production build |

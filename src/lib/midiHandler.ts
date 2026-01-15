@@ -26,8 +26,9 @@ export interface MidiState {
   webSocketPort?: string;
 }
 
-// Track switch listener callback type
+// Track switch listener callback types
 export type TrackSwitchCallback = (trackIndex: number) => void;
+export type TrackNameCallback = (trackName: string) => void;
 
 const MIDI_OUTPUT_STORAGE_KEY = 'cubase-remote-midi-output';
 const MIDI_INPUT_STORAGE_KEY = 'cubase-remote-midi-input';
@@ -39,6 +40,7 @@ class MidiHandler {
   private selectedInput: WebMidi.MIDIInput | null = null;
   private listeners: Set<(state: MidiState) => void> = new Set();
   private trackSwitchListeners: Set<TrackSwitchCallback> = new Set();
+  private trackNameListeners: Set<TrackNameCallback> = new Set();
   private channel: number = 0; // Default MIDI channel (0-15)
 
   // WebSocket fallback
@@ -63,6 +65,10 @@ class MidiHandler {
         this.autoSelectInput();
 
         console.log('[MIDI] Web MIDI initialized');
+
+        // Also connect WebSocket for receiving track names from Cubase
+        this.connectWebSocketForTrackNames();
+
         return this.getState();
       } catch (error) {
         console.warn('[MIDI] Web MIDI failed:', error);
@@ -73,6 +79,45 @@ class MidiHandler {
     // Fallback to WebSocket
     console.log('[MIDI] Web MIDI not available, trying WebSocket...');
     return this.initWebSocket();
+  }
+
+  // Connect to WebSocket just for receiving track names (used when Web MIDI handles output)
+  private connectWebSocketForTrackNames(): void {
+    const wsHost = window.location.hostname || 'localhost';
+    const wsUrl = `ws://${wsHost}:${WS_PORT}`;
+
+    console.log(`[MIDI] Connecting WebSocket for track names: ${wsUrl}`);
+
+    try {
+      const trackWs = new WebSocket(wsUrl);
+
+      trackWs.onopen = () => {
+        console.log('[MIDI] WebSocket connected for track names');
+      };
+
+      trackWs.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'trackChange' && msg.trackName) {
+            console.log(`[MIDI] Track changed: "${msg.trackName}"`);
+            this.trackNameListeners.forEach(cb => cb(msg.trackName));
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      };
+
+      trackWs.onerror = () => {
+        console.log('[MIDI] WebSocket for track names failed (midi-server may not be running)');
+      };
+
+      trackWs.onclose = () => {
+        // Reconnect after 5 seconds
+        setTimeout(() => this.connectWebSocketForTrackNames(), 5000);
+      };
+    } catch (e) {
+      console.log('[MIDI] Could not create WebSocket for track names');
+    }
   }
 
   private async initWebSocket(): Promise<MidiState> {
@@ -104,6 +149,10 @@ class MidiHandler {
               this.wsPortName = msg.port || 'MIDI Bridge';
               this.notifyListeners();
               resolve(this.getState());
+            } else if (msg.type === 'trackChange' && msg.trackName) {
+              // Received track name from Cubase via midi-server
+              console.log(`[MIDI] Track changed: "${msg.trackName}"`);
+              this.trackNameListeners.forEach(cb => cb(msg.trackName));
             }
           } catch (e) {
             console.error('[MIDI] WebSocket message error:', e);
@@ -378,10 +427,11 @@ class MidiHandler {
     }
 
     if (foundInput) {
-      this.selectedInput = foundInput;
+      const input = foundInput as WebMidi.MIDIInput;
+      this.selectedInput = input;
       localStorage.setItem(MIDI_INPUT_STORAGE_KEY, inputId);
       // Set up message handler
-      this.selectedInput.onmidimessage = this.handleMidiMessage.bind(this);
+      input.onmidimessage = this.handleMidiMessage.bind(this);
       this.notifyListeners();
       return true;
     }
@@ -414,10 +464,16 @@ class MidiHandler {
     }
   }
 
-  // Subscribe to track switch events
+  // Subscribe to track switch events (by index)
   onTrackSwitch(callback: TrackSwitchCallback): () => void {
     this.trackSwitchListeners.add(callback);
     return () => this.trackSwitchListeners.delete(callback);
+  }
+
+  // Subscribe to track name changes (from Cubase MIDI Remote script)
+  onTrackName(callback: TrackNameCallback): () => void {
+    this.trackNameListeners.add(callback);
+    return () => this.trackNameListeners.delete(callback);
   }
 
   setChannel(channel: number): void {

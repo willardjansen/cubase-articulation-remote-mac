@@ -25,6 +25,8 @@ The app needs two servers running:
 
 On Windows, loopMIDI provides virtual MIDI routing to Cubase.
 
+**Windows users:** See the MIDI feedback loop fix in CLAUDE.md or docs/INSTALL.md if Cubase hangs when the MIDI bridge runs.
+
 ## What I Need Help With
 
 [DESCRIBE YOUR TASK HERE - for example:]

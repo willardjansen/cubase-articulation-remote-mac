@@ -5,9 +5,10 @@ A web-based remote control for Cubase Expression Maps, designed for iPad/tablet 
 ## Features
 
 - **iPad Optimized** - Touch-friendly interface designed for tablets
+- **Auto Track Switching** - Automatically loads matching expression map when you select a track in Cubase
+- **Server-Side Maps** - Store expression maps on your computer, auto-load on track change
 - **Multi-File Drop** - Drop multiple expression maps, auto-merge into one view
 - **Instrument Library** - Save and load instrument configurations
-- **Server-Side Maps** - Load expression maps from a folder on your Mac
 - **MIDI Channels** - Merged maps auto-send on correct channels (Ch1-4)
 - **Auto-Assign Remotes** - Missing trigger notes are auto-assigned
 - **Cubase Colors** - Buttons match your Cubase color coding
@@ -26,98 +27,142 @@ npm install
 ### 2. Start the Servers
 
 ```bash
-# Terminal 1: Start the MIDI bridge (required for iPad)
-npm run midi
-
-# Terminal 2: Start the web server
-npm run dev
-```
-
-Or run both together:
-```bash
+# Start both servers at once
 npm run all
+
+# Or separately:
+npm run midi    # Terminal 1: MIDI bridge
+npm run dev     # Terminal 2: Web server
 ```
 
 ### 3. Access the App
 
 | Device | URL |
 |--------|-----|
-| Mac (localhost) | http://localhost:3000 |
-| iPad / Network | http://YOUR_MAC_IP:3000 |
+| Local browser | http://localhost:3000 |
+| iPad / Network | http://YOUR_IP:3000 |
 
-Find your Mac's IP: `ipconfig getifaddr en0`
+The MIDI bridge (`npm run midi`) auto-detects and displays your IP address on startup.
+
+**Note:** Your PC can be on Ethernet while iPad is on WiFi - they just need to be on the same network.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         Mac                                  │
+│                    Windows/Mac Host                          │
 │  ┌─────────────┐    ┌──────────────┐    ┌───────────────┐  │
-│  │  Next.js    │    │ MIDI Bridge  │    │    Cubase     │  │
-│  │  Web App    │───▶│  Server      │───▶│               │  │
+│  │  Next.js    │◀──▶│ MIDI Bridge  │◀──▶│    Cubase     │  │
+│  │  Web App    │    │  Server      │    │               │  │
 │  │  :3000      │    │  :3001       │    │               │  │
 │  └─────────────┘    └──────────────┘    └───────────────┘  │
 │         ▲                  ▲                   ▲            │
 └─────────│──────────────────│───────────────────│────────────┘
           │ HTTP             │ WebSocket         │ MIDI
           │                  │                   │
-     ┌────┴──────────────────┴────┐              │
-     │         iPad               │         IAC Driver /
-     │   Safari Browser           │         loopMIDI
-     │   http://192.168.1.38:3000 │
+     ┌────┴──────────────────┴────┐         loopMIDI (Win)
+     │         iPad               │         IAC Driver (Mac)
+     │   Safari/Chrome Browser    │
      └────────────────────────────┘
 ```
 
 ### How it Works
 
-- **On Mac (Chrome/Safari)**: Uses Web MIDI API directly
-- **On iPad**: Automatically connects via WebSocket to the MIDI Bridge server on your Mac
+- **On Mac/Windows (Chrome)**: Uses Web MIDI API directly
+- **On iPad**: Connects via WebSocket to the MIDI Bridge server
 
-## MIDI Setup
+## Windows Setup
 
-### macOS (IAC Driver)
+### 1. Install loopMIDI
 
-1. Open **Audio MIDI Setup**
-2. Go to **Window > Show MIDI Studio**
-3. Double-click **IAC Driver**
-4. Check **Device is online**
-5. Add a bus named "Browser to Cubase"
+1. Download [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html)
+2. Install and run loopMIDI
+3. Create **two** ports:
+   - `Browser to Cubase` (for sending articulations)
+   - `ArticulationRemote` (for receiving track names)
 
-### Windows (loopMIDI)
+### 2. Configure Cubase (IMPORTANT)
 
-1. Install **[loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html)**
-2. Create a port named "Browser to Cubase"
-3. Keep loopMIDI running
+**Prevent MIDI Feedback Loop:**
 
-### In Cubase
-
-1. **Studio > Studio Setup > MIDI Port Setup**
-2. Enable the IAC Driver / loopMIDI port for input
+1. **Preferences > MIDI** → Uncheck **"MIDI Thru Active"**
+2. **Studio > Studio Setup > MIDI Port Setup**:
+   - "Browser to Cubase" **Input**: State=Active, In 'All MIDI Inputs'=**Checked**
+   - "Browser to Cubase" **Output**: **Uncheck "Visible"**
 3. Assign Expression Maps to your tracks
-4. Remote triggers will now respond to the app
 
-## Server-Side Expression Maps
+> **Warning:** Without these settings, Cubase may freeze due to a MIDI feedback loop.
 
-Store your expression maps on the server for easy loading:
+### 3. Set Up Auto Track Switching
 
-### Setup
+This enables automatic expression map loading when you select a track in Cubase.
 
-1. Create the folder:
-```bash
-mkdir expression-maps
+**Install the MIDI Remote Script** (Run PowerShell as Administrator):
+
+```powershell
+mkdir "C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote" -Force
+copy "cubase-midi-remote\articulation_remote.js" "C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote\"
 ```
 
-2. Copy your `.expressionmap` files into it:
+**Configure in Cubase:**
+
+1. Restart Cubase (or click "Reload Scripts" in MIDI Remote Script Console)
+2. Open **Studio > MIDI Remote Manager**
+3. Click **"+ Add MIDI Controller Surface"**
+4. Select **Vendor: articulation**, **Model: remote**
+5. Ports should auto-detect to **ArticulationRemote**
+
+**Verify:**
+- Open the MIDI Remote Script Console
+- Switch tracks - you should see `ART-REMOTE: Track = "TrackName"` messages
+
+### 4. Add Expression Maps to Server
+
+Place your `.expressionmap` files in the `expression-maps/` folder:
+
 ```
 expression-maps/
 ├── Strings/
-│   ├── Violin.expressionmap
-│   └── Cello.expressionmap
+│   ├── Amati Viola.expressionmap
+│   └── Guarneri Violin.expressionmap
 └── Brass/
     └── Trumpets.expressionmap
 ```
 
-3. Access them via the **Library** button (folder icon) in the app
+**Important:** Name the files to match your Cubase track names for auto-switching.
+
+## macOS Setup
+
+### IAC Driver
+
+1. Open **Audio MIDI Setup** (Applications → Utilities)
+2. Go to **Window → Show MIDI Studio**
+3. Double-click **IAC Driver**
+4. Check **"Device is online"**
+5. Add buses: "Browser to Cubase" and "ArticulationRemote"
+
+### Cubase Configuration
+
+1. In **MIDI Port Setup**, check "In 'All MIDI Inputs'" for IAC Driver
+2. Assign Expression Maps to tracks
+
+The MIDI Remote script installation is similar to Windows, but in the macOS Cubase folder.
+
+## Usage
+
+### Basic Articulation Switching
+
+1. Start the servers: `npm run all`
+2. Open the app on iPad: `http://YOUR_IP:3000`
+3. Load an expression map (drag & drop or use Library)
+4. Tap articulation buttons to switch sounds in Cubase
+
+### Auto Track Switching
+
+1. Ensure the MIDI Remote script is installed and configured
+2. Place expression maps in `expression-maps/` folder (named to match tracks)
+3. Select a track in Cubase
+4. The web app automatically loads the matching expression map
 
 ## Scripts
 
@@ -132,22 +177,30 @@ expression-maps/
 
 ### iPad shows "MIDI Bridge not running"
 
-Start the MIDI bridge server on your Mac:
+Start the MIDI bridge server:
 ```bash
 npm run midi
 ```
 
-### No MIDI outputs on Mac
+### Cubase hangs/freezes (Windows)
 
-1. Verify IAC Driver is enabled in Audio MIDI Setup
-2. Refresh the page
-3. Grant MIDI permissions when prompted
+This is caused by a MIDI feedback loop. Fix:
+1. Disable MIDI Thru: Preferences → MIDI → Uncheck "MIDI Thru Active"
+2. Hide loopMIDI output: Studio Setup → MIDI Port Setup → Uncheck "Visible" for output
 
-### Articulations not switching
+### Auto track switching not working
 
-1. Check Expression Map is assigned to the track
-2. Verify Cubase MIDI input includes IAC Driver
-3. Ensure remote triggers are assigned in Expression Map
+Check each step:
+1. **Script Console**: See `ART-REMOTE: Track = "..."` messages?
+2. **loopMIDI**: ArticulationRemote showing activity?
+3. **midi-server**: See `RAW MIDI IN` messages?
+4. **Web app**: Expression map names match track names?
+
+### Articulations not switching in Cubase
+
+1. Verify Expression Map is assigned to the track
+2. Check Cubase MIDI input includes the loopMIDI/IAC port
+3. Ensure remote triggers are assigned in the Expression Map
 
 ## How It Works
 
@@ -162,16 +215,29 @@ Tap "Legato" button
                          activates articulation
 ```
 
-This ensures Cubase handles articulation state, display, and notation correctly.
+Track switching works via Cubase MIDI Remote:
+
+```
+Cubase Track Selection
+       │
+       ▼
+MIDI Remote Script ──────▶ loopMIDI "ArticulationRemote"
+(articulation/remote)              │
+                                   ▼
+                          midi-server.js
+                                   │
+                                   ▼ WebSocket
+                          Web App (loads matching map)
+```
 
 ## Browser Compatibility
 
 | Platform | Browser | Support |
 |----------|---------|---------|
-| Mac | Chrome/Safari | ✅ Web MIDI |
-| iPad | Safari | ✅ WebSocket Bridge |
-| Windows | Chrome/Edge | ✅ Web MIDI |
-| Any | Firefox | ❌ No Web MIDI |
+| Windows | Chrome/Edge | Web MIDI |
+| Mac | Chrome/Safari | Web MIDI |
+| iPad | Safari/Chrome | WebSocket Bridge |
+| Any | Firefox | No Web MIDI |
 
 ## Project Structure
 
@@ -182,6 +248,8 @@ This ensures Cubase handles articulation state, display, and notation correctly.
 │   └── lib/
 │       ├── expressionMapParser # XML parsing
 │       └── midiHandler         # MIDI + WebSocket
+├── cubase-midi-remote/
+│   └── articulation_remote.js  # Cubase MIDI Remote script
 ├── expression-maps/            # Server-side maps (you create)
 ├── midi-server.js              # WebSocket MIDI bridge
 └── public/
@@ -192,8 +260,3 @@ This ensures Cubase handles articulation state, display, and notation correctly.
 ## License
 
 MIT License
-
-## Credits
-
-- [Art Conductor](https://www.babylonwaves.com/) - Expression map collections
-- [Metagrid](https://metasystem.io/) - Inspiration for DAW remote concept

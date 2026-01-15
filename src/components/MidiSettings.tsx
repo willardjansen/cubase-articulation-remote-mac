@@ -16,6 +16,7 @@ export function MidiSettings({ onClose }: MidiSettingsProps) {
     selectedOutputId: null,
     selectedInputId: null,
     error: null,
+    useWebSocket: false,
   });
   const [channel, setChannel] = useState(1);
   const [isInitialized, setIsInitialized] = useState(false);
