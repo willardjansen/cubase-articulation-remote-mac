@@ -25,9 +25,10 @@ A web-based remote control for Cubase Expression Maps, designed for iPad/tablet 
 
 **Windows/macOS Installer:**
 
-1. Download the latest release from [Releases](https://github.com/willardjansen/cubase-articulation-remote/releases)
+1. Download the latest release from [Releases](https://github.com/willardjansen/cubase-articulation-remote-mac/releases)
    - Windows: `Cubby Remote Setup 1.0.0.exe`
-   - macOS: `Cubby Remote.dmg` (coming soon)
+   - macOS Intel: `Cubby Remote-1.0.0.dmg`
+   - macOS Apple Silicon: `Cubby Remote-1.0.0-arm64.dmg`
 2. Run the installer
 3. Launch "Cubby Remote" from Start Menu or Desktop
 4. The app runs in system tray and auto-opens browser to http://localhost:3000
@@ -36,7 +37,11 @@ The standalone app includes the built-in MIDI server - no terminal commands need
 
 ### Option 2: Development Mode
 
-For developers or advanced users:
+For developers or advanced users who want to run from source.
+
+**Prerequisites:**
+1. Install **Node.js 18+** from https://nodejs.org/ (LTS version recommended)
+2. Verify installation: `node --version` should show v18.x or higher
 
 ```bash
 # 1. Install dependencies
@@ -200,11 +205,18 @@ The MIDI Remote script installation is similar to Windows, but in the macOS Cuba
 
 ## Building from Source
 
+### Prerequisites (All Platforms)
+
+**Install Node.js 18+:**
+1. Download from https://nodejs.org/ (choose LTS version)
+2. Run the installer
+3. Verify: Open terminal/command prompt and run `node --version`
+   - Should show `v18.x.x` or higher
+
 ### Windows
 
-**Requirements:**
-- Node.js 18+
-- Windows Developer Mode enabled (for building)
+**Additional Requirements:**
+- Windows Developer Mode enabled
 
 **Enable Developer Mode:**
 1. Settings → Update & Security → For developers
@@ -221,6 +233,10 @@ The installer will be at `dist/Cubby Remote Setup 1.0.0.exe`
 
 ### macOS
 
+**Additional Requirements:**
+- Xcode Command Line Tools: `xcode-select --install`
+
+**Build Installer:**
 ```bash
 npm install
 npm run electron:build
