@@ -6,8 +6,11 @@ node_modules/
 # Build output
 .next/
 out/
-build/
 dist/
+
+# Keep build/ for Electron resources (icons, entitlements)
+# but ignore generated iconset folder
+build/icon.iconset/
 
 # Production
 *.tsbuildinfo
