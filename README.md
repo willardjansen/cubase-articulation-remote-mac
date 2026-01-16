@@ -1,9 +1,9 @@
 # Cubby Remote
 
-A web-based remote control for Cubase Expression Maps, designed for iPad/tablet use. Automatically loads expression maps when you select tracks in Cubase, displaying tappable articulation buttons to switch sounds via MIDI.
+An articulation switcher for Cubase users, designed for iPad/tablet use. Automatically loads expression maps when you select tracks in Cubase, displaying tappable articulation buttons to switch sounds via MIDI.
 
 > **⚠️ This is FREE software.** If you paid for this, you were scammed.
-> Official source: https://github.com/willardjansen/cubase-articulation-remote
+> Official source: https://github.com/willardjansen/cubby-remote
 
 ## Features
 
@@ -25,7 +25,7 @@ A web-based remote control for Cubase Expression Maps, designed for iPad/tablet 
 
 **Windows/macOS Installer:**
 
-1. Download the latest release from [Releases](https://github.com/willardjansen/cubase-articulation-remote-mac/releases)
+1. Download the latest release from [Releases](https://github.com/willardjansen/cubby-remote/releases)
    - Windows: `Cubby Remote Setup 1.0.0.exe`
    - macOS Intel: `Cubby Remote-1.0.0.dmg`
    - macOS Apple Silicon: `Cubby Remote-1.0.0-arm64.dmg`

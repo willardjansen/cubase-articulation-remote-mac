@@ -5,7 +5,7 @@
     "name": "Willard Jansen",
     "email": "willardjansen@me.com"
   },
-  "description": "Remote control for Cubase Expression Map articulations",
+  "description": "Articulation switcher for Cubase users",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
