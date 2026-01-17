@@ -95,33 +95,159 @@ export default function Home() {
     return unsubscribe;
   }, [expressionMaps, activeMapIndex]);
 
-  // Find a matching server map for a track name
+  // Instrument name aliases (different names for the same instrument)
+  const INSTRUMENT_ALIASES: Record<string, string[]> = {
+    'english horn': ['cor anglais', 'english horn'],
+    'cor anglais': ['cor anglais', 'english horn'],
+  };
+
+  // Enhanced fuzzy matching with keyword scoring
   const findMatchingServerMap = (trackName: string, serverMaps: ServerMapFile[]): ServerMapFile | null => {
     if (!trackName || serverMaps.length === 0) return null;
 
     const normalizedTrack = trackName.toLowerCase().trim();
 
-    // Try exact match first
+    // Try exact match first (fastest)
     let match = serverMaps.find(m => m.name.toLowerCase() === normalizedTrack);
-    if (match) return match;
+    if (match) {
+      console.log('[Match] Exact match:', match.path);
+      return match;
+    }
 
-    // Try if track name contains map name or vice versa
+    // Try simple substring match (second fastest)
     match = serverMaps.find(m =>
       normalizedTrack.includes(m.name.toLowerCase()) ||
       m.name.toLowerCase().includes(normalizedTrack)
     );
-    if (match) return match;
+    if (match) {
+      console.log('[Match] Substring match:', match.path);
+      return match;
+    }
 
-    // Try matching first word
-    const trackFirstWord = normalizedTrack.split(/[\s-_]/)[0];
-    match = serverMaps.find(m => {
-      const mapFirstWord = m.name.toLowerCase().split(/[\s-_]/)[0];
-      return trackFirstWord === mapFirstWord ||
-             m.name.toLowerCase().startsWith(trackFirstWord) ||
-             trackFirstWord.startsWith(mapFirstWord);
+    // Extract keywords from track name (include numbers, min length 1)
+    const trackKeywords = normalizedTrack
+      .split(/[\s\-_\/]+/)
+      .filter(word => word.length >= 1)
+      .map(word => word.toLowerCase());
+
+    // Extract numbers from track name for special handling
+    const trackNumbers = trackKeywords.filter(k => /^\d+$/.test(k));
+
+    if (trackKeywords.length === 0) return null;
+
+    console.log('[Match] Searching with keywords:', trackKeywords);
+    if (trackNumbers.length > 0) {
+      console.log('[Match] Track contains numbers:', trackNumbers);
+    }
+
+    // Score each map based on keyword matches in folder path + filename
+    const scored = serverMaps.map(map => {
+      const fullPath = `${map.folder}/${map.name}`.toLowerCase();
+      const filenameLower = map.name.toLowerCase();
+      let score = 0;
+      const matchedKeywords: string[] = [];
+
+      // Extract numbers from map name
+      const mapNumbers: string[] = fullPath.match(/\b\d+\b/g) || [];
+
+      for (const keyword of trackKeywords) {
+        // Skip very short non-numeric words
+        if (keyword.length === 1 && !/^\d$/.test(keyword)) {
+          continue;
+        }
+
+        let keywordMatched = false;
+
+        // Check for exact keyword match in full path
+        if (fullPath.includes(keyword)) {
+          score += 10; // Full keyword match
+          matchedKeywords.push(keyword);
+          keywordMatched = true;
+        } else {
+          // Check for aliases (e.g., "cor anglais" → "english horn")
+          const aliases = INSTRUMENT_ALIASES[keyword];
+          if (aliases) {
+            for (const alias of aliases) {
+              if (fullPath.includes(alias)) {
+                score += 10; // Alias match
+                matchedKeywords.push(`${keyword}→${alias}`);
+                keywordMatched = true;
+                break;
+              }
+            }
+          }
+
+          // Check for partial matches (e.g., "pr" matches "prime")
+          if (!keywordMatched && keyword.length >= 2) {
+            const words = fullPath.split(/[\s\-_\/]+/);
+            for (const word of words) {
+              if (word.startsWith(keyword)) {
+                score += 5; // Partial match (prefix)
+                matchedKeywords.push(`${keyword}→${word}`);
+                keywordMatched = true;
+                break;
+              }
+            }
+          }
+        }
+
+        // Bonus: if keyword matches appear in filename (not just folder)
+        if (keywordMatched && filenameLower.includes(keyword)) {
+          score += 3; // Filename bonus
+        }
+      }
+
+      // Number matching: Bonus if track numbers match map numbers exactly
+      if (trackNumbers.length > 0) {
+        for (const trackNum of trackNumbers) {
+          if (mapNumbers.includes(trackNum)) {
+            score += 15; // Strong bonus for exact number match
+            matchedKeywords.push(`#${trackNum}`);
+          }
+        }
+
+        // Penalty if map contains different numbers (likely wrong instrument variant)
+        const hasConflictingNumber = mapNumbers.some(mapNum => {
+          // Check if it's a different single-digit number (e.g., "1" vs "2")
+          return mapNum.length === 1 && trackNumbers.includes('1') && mapNum !== '1' ||
+                 mapNum.length === 1 && trackNumbers.includes('2') && mapNum !== '2' ||
+                 mapNum.length === 1 && trackNumbers.includes('3') && mapNum !== '3';
+        });
+
+        if (hasConflictingNumber) {
+          score -= 20; // Penalty for wrong variant number
+        }
+      }
+
+      return { map, score, matchedKeywords };
     });
-    if (match) return match;
 
+    // Filter to only maps with some matches
+    const candidates = scored.filter(s => s.score > 0);
+
+    if (candidates.length === 0) {
+      console.log('[Match] No matches found');
+      return null;
+    }
+
+    // Sort by score (highest first)
+    candidates.sort((a, b) => b.score - a.score);
+
+    // Log top 3 candidates for debugging
+    console.log('[Match] Top candidates:');
+    candidates.slice(0, 3).forEach((c, i) => {
+      console.log(`  ${i + 1}. ${c.map.path} (score: ${c.score}, keywords: ${c.matchedKeywords.join(', ')})`);
+    });
+
+    // Return best match
+    const best = candidates[0];
+
+    // Only return if score is reasonably high (at least 10 points)
+    if (best.score >= 10) {
+      return best.map;
+    }
+
+    console.log('[Match] Score too low, no confident match');
     return null;
   };
 
@@ -293,6 +419,19 @@ export default function Home() {
               </select>
             </>
           )}
+
+          {/* Template Builder button */}
+          <button
+            onClick={() => window.open('/template-builder', '_blank')}
+            className="p-2 rounded-lg bg-cubase-accent hover:bg-cubase-highlight
+                     transition-colors"
+            title="DAWproject Template Builder"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+          </button>
 
           {/* Library button */}
           <button

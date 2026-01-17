@@ -3,12 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
-// MIDI server dependencies
-const WebSocket = require('ws');
-const JZZ = require('jzz');
-const midi = require('midi');
-const os = require('os');
-
 // Configuration
 const WS_PORT = 3001;
 const NEXT_PORT = 3000;
@@ -16,6 +10,7 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // References
 let tray = null;
+let midiServerProcess = null;
 
 // Expression maps directory - use project folder
 function getExpressionMapsDir() {
@@ -31,25 +26,13 @@ function getExpressionMapsDir() {
   return mapsDir;
 }
 
-// MIDI state
-let midiOut = null;
-let midiIn = null;
-let midiPing = null;
-let selectedOutPortName = null;
-let selectedInPortName = null;
-let pingInterval = null;
-
-// Track name parsing state
-let trackNameBuffer = '';
-let trackNameLength = 0;
-let isReceivingTrackName = false;
-
-// WebSocket clients
-let wsClients = new Set();
-let wss = null;
+// MIDI state (for tray menu display only)
+let selectedOutPortName = 'Starting...';
+let selectedInPortName = 'Starting...';
 
 // Get local IP address
 function getLocalIP() {
+  const os = require('os');
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
@@ -61,209 +44,102 @@ function getLocalIP() {
   return 'localhost';
 }
 
-// Initialize MIDI
-async function initMidi() {
-  console.log('\n MIDI Bridge Server (Electron)');
-  console.log('=====================================\n');
+// Find Node.js executable
+function findNodeExecutable() {
+  // Try process.execPath first (might be Node.js itself)
+  if (process.execPath && process.execPath.includes('node')) {
+    return process.execPath;
+  }
 
-  const info = JZZ().info();
-  const outputs = info.outputs;
-  const inputs = info.inputs;
+  // Common installation paths
+  const possiblePaths = [
+    'C:\\Program Files\\nodejs\\node.exe',
+    'C:\\Program Files (x86)\\nodejs\\node.exe',
+    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'nodejs', 'node.exe'),
+    path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'nodejs', 'node.exe'),
+  ];
 
-  console.log('Available MIDI outputs:');
-  outputs.forEach((port, i) => {
-    console.log(`  ${i + 1}. ${port.name}`);
-  });
-  console.log('');
-
-  console.log('Available MIDI inputs:');
-  inputs.forEach((port, i) => {
-    console.log(`  ${i + 1}. ${port.name}`);
-  });
-  console.log('');
-
-  // Set up OUTPUT (Browser → Cubase)
-  const preferredOutNames = ['Browser to Cubase', 'Browser to cubase', 'IAC Driver', 'loopMIDI'];
-
-  for (const preferred of preferredOutNames) {
-    const found = outputs.find(p => p.name.toLowerCase().includes(preferred.toLowerCase()));
-    if (found) {
-      selectedOutPortName = found.name;
-      break;
+  // Check if any exist
+  for (const nodePath of possiblePaths) {
+    if (fs.existsSync(nodePath)) {
+      console.log('Found Node.js at:', nodePath);
+      return nodePath;
     }
   }
 
-  if (selectedOutPortName) {
+  // Fallback to 'node' and hope it's in PATH
+  console.log('Using "node" from PATH');
+  return 'node';
+}
+
+// Start MIDI server as a separate Node.js process
+function startMidiServer() {
+  const logPath = path.join(app.getPath('userData'), 'midi-server.log');
+  const log = (msg) => {
+    const timestamp = new Date().toISOString();
+    const logMsg = `[${timestamp}] ${msg}\n`;
+    console.log(msg);
     try {
-      midiOut = JZZ().openMidiOut(selectedOutPortName);
-      console.log(`Output: ${selectedOutPortName} (Browser → Cubase)`);
+      fs.appendFileSync(logPath, logMsg);
     } catch (e) {
-      console.error(`Failed to open MIDI output: ${e.message}`);
+      console.error('Failed to write to log file:', e);
     }
-  } else {
-    console.log('No MIDI output found for Browser → Cubase');
+  };
+
+  log('\n=== Starting MIDI Bridge Server ===\n');
+
+  const midiServerPath = isDev
+    ? path.join(__dirname, '..', 'midi-server.js')
+    : path.join(process.resourcesPath, 'app.asar.unpacked', 'midi-server.js');
+
+  log(`MIDI server path: ${midiServerPath}`);
+  log(`File exists: ${fs.existsSync(midiServerPath)}`);
+
+  if (!fs.existsSync(midiServerPath)) {
+    log(`ERROR: MIDI server not found at: ${midiServerPath}`);
+    return;
   }
 
-  // Set up INPUT (Cubase → Browser)
-  const midiInput = new midi.Input();
-  const inputCount = midiInput.getPortCount();
+  const serverCwd = isDev
+    ? path.join(__dirname, '..')
+    : path.join(process.resourcesPath, 'app.asar.unpacked');
 
-  console.log('Available MIDI inputs (midi package):');
-  for (let i = 0; i < inputCount; i++) {
-    console.log(`  ${i}: ${midiInput.getPortName(i)}`);
-  }
+  const nodeExecutable = findNodeExecutable();
+  log(`Using Node.js executable: ${nodeExecutable}`);
+  log(`Node.js exists: ${fs.existsSync(nodeExecutable)}`);
+  log(`Starting MIDI server with cwd: ${serverCwd}`);
+  log(`Log file: ${logPath}`);
 
-  const preferredInNames = ['ArticulationRemote', 'Articulation Remote', 'Cubase to Browser'];
-  let inputPortIndex = -1;
-
-  for (const preferred of preferredInNames) {
-    for (let i = 0; i < inputCount; i++) {
-      if (midiInput.getPortName(i).toLowerCase().includes(preferred.toLowerCase())) {
-        inputPortIndex = i;
-        selectedInPortName = midiInput.getPortName(i);
-        break;
-      }
-    }
-    if (inputPortIndex >= 0) break;
-  }
-
-  if (inputPortIndex >= 0) {
-    try {
-      midiInput.on('message', (deltaTime, message) => {
-        // Only log non-ping messages
-        if (message[1] !== 100) {
-          console.log(`RAW MIDI IN: [${message.join(', ')}]`);
-        }
-        handleMidiFromCubase(message);
-      });
-
-      midiInput.openPort(inputPortIndex);
-      midiIn = midiInput;
-      console.log(`Input: ${selectedInPortName} (Cubase → Browser)`);
-
-      // Open ArticulationRemote as OUTPUT to send pings
-      const pingPort = outputs.find(p => p.name.toLowerCase().includes('articulationremote'));
-      if (pingPort) {
-        try {
-          midiPing = JZZ().openMidiOut(pingPort.name);
-          console.log(`Ping output: ${pingPort.name}`);
-
-          pingInterval = setInterval(() => {
-            if (midiPing) {
-              midiPing.send([0xBF, 100, 1]);
-            }
-          }, 500);
-        } catch (e) {
-          console.log(`Could not open ping output: ${e.message}`);
-        }
-      }
-    } catch (e) {
-      console.error(`Failed to open MIDI input: ${e.message}`);
-    }
-  } else {
-    console.log('No "ArticulationRemote" input found - track switching disabled');
-  }
-
-  console.log('');
-}
-
-// Handle incoming MIDI from Cubase
-function handleMidiFromCubase(msg) {
-  const status = msg[0];
-  const data1 = msg[1];
-  const data2 = msg[2];
-
-  if (status !== 0xBF) return;
-
-  if (data1 === 119) {
-    trackNameBuffer = '';
-    trackNameLength = data2;
-    isReceivingTrackName = true;
-    console.log(`Track name start (length: ${trackNameLength})`);
-  } else if (data1 === 118 && isReceivingTrackName) {
-    trackNameBuffer += String.fromCharCode(data2);
-  } else if (data1 === 117 && isReceivingTrackName) {
-    isReceivingTrackName = false;
-    console.log(`Track name received: "${trackNameBuffer}"`);
-    broadcastTrackName(trackNameBuffer);
-  }
-}
-
-// Broadcast track name to all connected browsers
-function broadcastTrackName(trackName) {
-  const message = JSON.stringify({
-    type: 'trackChange',
-    trackName: trackName
-  });
-
-  wsClients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
-      console.log(`Sent track name to browser: "${trackName}"`);
-    }
-  });
-}
-
-// Send MIDI message to Cubase
-function sendMidi(status, data1, data2) {
-  const msg = [status, data1, data2];
-  console.log(`MIDI Out: [${msg.join(', ')}]`);
-
-  if (midiOut) {
-    try {
-      midiOut.send(msg);
-    } catch (e) {
-      console.error(`Error: ${e.message}`);
-    }
-  }
-}
-
-// Start WebSocket server
-function startWebSocketServer() {
-  wss = new WebSocket.Server({ port: WS_PORT });
-
-  wss.on('connection', (ws, req) => {
-    const clientIp = req.socket.remoteAddress;
-    console.log(`Client connected: ${clientIp}`);
-
-    wsClients.add(ws);
-
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-
-        if (msg.type === 'midi') {
-          sendMidi(msg.status, msg.data1, msg.data2);
-        } else if (msg.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong', port: selectedOutPortName }));
-        }
-      } catch (e) {
-        console.error('Invalid message:', e.message);
-      }
+  // Spawn midi-server.js using system Node.js
+  try {
+    midiServerProcess = spawn(nodeExecutable, [midiServerPath], {
+      stdio: ['ignore', 'pipe', 'pipe'], // Capture stdout/stderr
+      cwd: serverCwd
     });
 
-    ws.on('close', () => {
-      console.log(`Client disconnected: ${clientIp}`);
-      wsClients.delete(ws);
+    log(`MIDI server process spawned, PID: ${midiServerProcess.pid}`);
+
+    // Log MIDI server output
+    midiServerProcess.stdout.on('data', (data) => {
+      log(`[MIDI Server] ${data.toString().trim()}`);
     });
 
-    ws.send(JSON.stringify({
-      type: 'connected',
-      port: selectedOutPortName,
-      inputPort: selectedInPortName,
-      status: midiOut ? 'ready' : 'no-midi',
-      trackSwitching: !!midiIn
-    }));
-  });
+    midiServerProcess.stderr.on('data', (data) => {
+      log(`[MIDI Server Error] ${data.toString().trim()}`);
+    });
 
-  const localIP = getLocalIP();
-  console.log(`WebSocket server running on ws://localhost:${WS_PORT}`);
-  console.log(`\nLocal: http://localhost:${NEXT_PORT}`);
-  console.log(`iPad:  http://${localIP}:${NEXT_PORT}`);
-  if (midiIn) {
-    console.log('\nTrack switching enabled');
+    midiServerProcess.on('error', (err) => {
+      log(`ERROR: Failed to start MIDI server: ${err.message}`);
+      log(`ERROR stack: ${err.stack}`);
+    });
+
+    midiServerProcess.on('exit', (code, signal) => {
+      log(`MIDI server exited with code ${code}, signal ${signal}`);
+    });
+  } catch (err) {
+    log(`EXCEPTION while spawning: ${err.message}`);
+    log(`EXCEPTION stack: ${err.stack}`);
   }
-  console.log('');
 }
 
 // Simple static file server for production
@@ -333,14 +209,23 @@ function startNextServer() {
 
       fs.readFile(fullPath, (err, data) => {
         if (err) {
-          // Try with .html extension for Next.js routes
-          fs.readFile(fullPath + '.html', (err2, data2) => {
+          // Try with /index.html for directory routes (e.g., /template-builder)
+          const indexPath = path.join(fullPath, 'index.html');
+          fs.readFile(indexPath, (err2, data2) => {
             if (err2) {
-              // Fallback to index.html for SPA routing
-              fs.readFile(path.join(outDir, 'index.html'), (err3, data3) => {
+              // Try with .html extension for Next.js routes
+              fs.readFile(fullPath + '.html', (err3, data3) => {
                 if (err3) {
-                  res.writeHead(404);
-                  res.end('Not Found');
+                  // Fallback to root index.html for SPA routing
+                  fs.readFile(path.join(outDir, 'index.html'), (err4, data4) => {
+                    if (err4) {
+                      res.writeHead(404);
+                      res.end('Not Found');
+                    } else {
+                      res.writeHead(200, { 'Content-Type': 'text/html' });
+                      res.end(data4);
+                    }
+                  });
                 } else {
                   res.writeHead(200, { 'Content-Type': 'text/html' });
                   res.end(data3);
@@ -498,6 +383,23 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: 'View MIDI Server Log',
+      click: () => {
+        const logPath = path.join(app.getPath('userData'), 'midi-server.log');
+        if (fs.existsSync(logPath)) {
+          shell.openPath(logPath);
+        } else {
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'Log File',
+            message: `Log file not found at:\n${logPath}`,
+            buttons: ['OK']
+          });
+        }
+      }
+    },
+    { type: 'separator' },
+    {
       label: 'Quit',
       click: () => {
         cleanup();
@@ -544,24 +446,9 @@ async function handleAddExpressionMaps() {
 
 // Cleanup on quit
 function cleanup() {
-  if (pingInterval) {
-    clearInterval(pingInterval);
-  }
-
-  if (midiOut) {
-    midiOut.close();
-  }
-
-  if (midiIn) {
-    midiIn.closePort();
-  }
-
-  if (midiPing) {
-    midiPing.close();
-  }
-
-  if (wss) {
-    wss.close();
+  if (midiServerProcess) {
+    console.log('Stopping MIDI server...');
+    midiServerProcess.kill();
   }
 
   if (httpServer) {
@@ -576,12 +463,8 @@ app.whenReady().then(async () => {
     app.dock.hide();
   }
 
-  try {
-    await initMidi();
-    startWebSocketServer();
-  } catch (error) {
-    console.error('Failed to initialize MIDI:', error);
-  }
+  // Start MIDI server as separate process
+  startMidiServer();
 
   // Always create tray, even if other things fail
   createTray();

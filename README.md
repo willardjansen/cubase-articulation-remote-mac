@@ -26,14 +26,17 @@ An articulation switcher for Cubase users, designed for iPad/tablet use. Automat
 **Windows/macOS Installer:**
 
 1. Download the latest release from [Releases](https://github.com/willardjansen/cubby-remote/releases)
-   - Windows: `Cubby Remote Setup 1.0.0.exe`
-   - macOS Intel: `Cubby Remote-1.0.0.dmg`
-   - macOS Apple Silicon: `Cubby Remote-1.0.0-arm64.dmg`
+   - Windows: `Cubby Remote Setup 1.1.0.exe`
+   - macOS Intel: `Cubby Remote-1.1.0.dmg`
+   - macOS Apple Silicon: `Cubby Remote-1.1.0-arm64.dmg`
 2. Run the installer
 3. Launch "Cubby Remote" from Start Menu or Desktop
 4. The app runs in system tray and auto-opens browser to http://localhost:3000
 
-The standalone app includes the built-in MIDI server - no terminal commands needed!
+The standalone app includes:
+- Built-in MIDI server - no terminal commands needed!
+- Quick access Template Builder button in the app header
+- MIDI Server Log viewer for troubleshooting (in system tray menu)
 
 ### Option 2: Development Mode
 
@@ -159,7 +162,61 @@ expression-maps/
     └── Trumpets.expressionmap
 ```
 
-**Important:** Names of expression map and trackname must be the same.
+**Important Naming Convention:**
+- Track names in Cubase must match expression map filenames for auto-switching to work
+- Example: Track named `Amati Viola` matches `Amati Viola.expressionmap`
+- Partial matching is supported: `Viola 1` will match `Amati Viola.expressionmap`
+- Use the Template Builder (below) to generate projects with exact track names
+
+### 5. DAWproject Template Builder
+
+To solve the track naming challenge, use the built-in **Template Builder** to generate Cubase project templates with track names that exactly match your expression map filenames.
+
+**Access the Template Builder:**
+- **In-App Button:** Click the template icon in the top-right corner of the main app
+- **Direct URL:** http://localhost:3000/template-builder
+- **Standalone App:** Same URL, or use the in-app button
+
+**How to Use:**
+
+1. **Select Expression Maps:**
+   - Browse your expression maps folder tree
+   - Check folders/libraries you want to include
+   - See live count of selected tracks
+
+2. **Generate Template:**
+   - Click "Generate DAWproject"
+   - Download the `.dawproject` file
+
+3. **Import to Cubase:**
+   - File → Import → DAWproject...
+   - Select the generated `.dawproject` file
+   - Tracks are created with names matching expression map filenames exactly
+
+4. **One-Time Setup:**
+   - Assign expression maps to tracks (Cubase remembers by name!)
+   - File → Save as Template...
+   - Future projects: Start from template with all maps assigned ✅
+
+**CLI Alternative:**
+
+For advanced users, generate templates via command line:
+
+```bash
+# Generate template for a specific folder
+node generate-dawproject.js "expression-maps/1 Prime/1 Wood" "VSL-Prime-Wood.dawproject"
+
+# Generate template for entire library
+node generate-dawproject.js "expression-maps/Spitfire Audio" "Spitfire-Complete.dawproject"
+
+# Multiple templates can be imported and merged in Cubase
+```
+
+**Benefits:**
+- **Perfect Matching:** Track names exactly match expression map filenames
+- **No Fuzzy Matching Issues:** Eliminates ambiguity with large libraries
+- **Reusable Templates:** One-time setup, infinite reuse
+- **Mix Libraries:** Select from multiple vendors in one template
 
 ## macOS Setup
 
@@ -206,6 +263,12 @@ The MIDI Remote script installation is similar to Windows, but in the macOS Cuba
 | `npm run electron:build` | Build standalone installer |
 | `npm run electron:pack` | Build unpacked app (no installer) |
 
+**Template Generation:**
+```bash
+node generate-dawproject.js <folder> <output.dawproject>
+```
+Or use the web UI at http://localhost:3000/template-builder
+
 ## Building from Source
 
 ### Prerequisites (All Platforms)
@@ -237,20 +300,36 @@ npm install
 npm run electron:build
 ```
 
-The installer will be at `dist/Cubby Remote Setup 1.0.0.exe`
+The installer will be at `dist/Cubby Remote Setup 1.1.0.exe`
 
 ### macOS
 
 **Additional Requirements:**
 - Xcode Command Line Tools: `xcode-select --install`
 
-**Build Installer:**
+**Build Universal DMG (Intel + Apple Silicon):**
 ```bash
 npm install
+npm rebuild midi  # Compile native MIDI module
+npm run build     # Build Next.js static export
 npm run electron:build
 ```
 
-The DMG will be at `dist/Cubby Remote-1.0.0.dmg`
+**Output Files:**
+- `dist/Cubby Remote-1.1.0.dmg` - Universal installer (both architectures)
+- `dist/Cubby Remote-1.1.0-arm64.dmg` - Apple Silicon only
+- `dist/Cubby Remote-1.1.0-x64.dmg` - Intel only
+
+**Build Notes:**
+- The build process creates universal binaries by default
+- Native MIDI module (`midi.node`) is compiled for both architectures
+- Total build time: ~5-10 minutes on Apple Silicon Macs
+- Installer size: ~120-150 MB (includes both architectures)
+
+**Troubleshooting macOS Builds:**
+1. If `npm rebuild midi` fails, ensure Xcode Command Line Tools are installed
+2. For M1/M2 Macs, Rosetta 2 may be needed for Intel builds: `softwareupdate --install-rosetta`
+3. Check build logs in `dist/builder-debug.yml` if the build fails
 
 ## Troubleshooting
 
@@ -280,6 +359,18 @@ Check each step:
 1. Verify Expression Map is assigned to the track
 2. Check Cubase MIDI input includes the loopMIDI/IAC port
 3. Ensure remote triggers are assigned in the Expression Map
+
+### MIDI Server Issues (Standalone App)
+
+**View MIDI Server Log:**
+1. Right-click the Cubby Remote system tray icon
+2. Select "View MIDI Server Log"
+3. Check for error messages about missing MIDI ports or WebSocket failures
+
+**Common Issues:**
+- **WebSocket connection failed**: MIDI server not running (check log)
+- **No MIDI ports listed**: loopMIDI/IAC Driver not configured
+- **Server exits immediately**: Node.js not found in PATH (Windows)
 
 ## How It Works
 
