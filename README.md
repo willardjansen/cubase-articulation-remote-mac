@@ -124,7 +124,20 @@ npm run dev     # Terminal 2: Web server
 
 This enables automatic expression map loading when you select a track in Cubase.
 
-**Install the MIDI Remote Script** (Run PowerShell as Administrator):
+**Install the MIDI Remote Script:**
+
+**Method 1: Using System Tray Menu (Recommended)**
+
+1. **Right-click the Cubby Remote tray icon** and select **"Open Cubase Script Folder"**
+2. **Copy** `articulation_remote.js` to:
+   ```
+   C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote\
+   ```
+3. **Create the folders** `articulation\remote\` if they don't exist (requires admin rights)
+
+**Method 2: PowerShell Command (Alternative)**
+
+Run PowerShell as Administrator:
 
 ```powershell
 mkdir "C:\Program Files\Steinberg\Cubase 15\midiremote_factory_scripts\Public\articulation\remote" -Force
@@ -234,7 +247,36 @@ node generate-dawproject.js "expression-maps/Spitfire Audio" "Spitfire-Complete.
 1. In **MIDI Port Setup**, check "In 'All MIDI Inputs'" for IAC Driver
 2. Assign Expression Maps to tracks
 
-The MIDI Remote script installation is similar to Windows, but in the macOS Cubase folder.
+### Set Up Auto Track Switching (macOS)
+
+**Install the MIDI Remote Script:**
+
+1. **Right-click the Cubby Remote menu bar icon** and select **"Open Cubase Script Folder"**
+2. In Finder, navigate to `/Applications/Cubase 15.app/`
+3. **Right-click** and select **"Show Package Contents"**
+4. Navigate to `Contents/midiremote_factory_scripts/Public/`
+5. Create folders: `articulation/remote/` if they don't exist
+6. **Copy** `articulation_remote.js` from the opened folder to the `remote` folder
+
+**Or use Terminal:**
+
+```bash
+sudo mkdir -p "/Applications/Cubase 15.app/Contents/midiremote_factory_scripts/Public/articulation/remote"
+
+sudo cp "cubase-midi-remote/articulation_remote.js" "/Applications/Cubase 15.app/Contents/midiremote_factory_scripts/Public/articulation/remote/"
+```
+
+**Configure in Cubase:**
+
+1. Restart Cubase (or click "Reload Scripts" in MIDI Remote Script Console)
+2. Open **Studio > MIDI Remote Manager**
+3. Click **"+ Add MIDI Controller Surface"**
+4. Select **Vendor: articulation**, **Model: remote**
+5. Ports should auto-detect to **ArticulationRemote**
+
+**Verify:**
+- Open the MIDI Remote Script Console
+- Switch tracks - you should see `ART-REMOTE: Track = "TrackName"` messages
 
 ## Usage
 
