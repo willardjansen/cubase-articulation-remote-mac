@@ -82,7 +82,11 @@ export async function GET(request: Request) {
       grouped[map.folder].push(map);
     }
 
-    return NextResponse.json({ maps, grouped });
+    return NextResponse.json({ maps, grouped }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      }
+    });
   } catch (error) {
     console.error('Error scanning expression maps:', error);
     return NextResponse.json({ error: 'Failed to scan expression maps' }, { status: 500 });
