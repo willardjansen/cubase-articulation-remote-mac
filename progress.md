@@ -48,3 +48,42 @@ Output: `dist\Cubby Remote Setup 1.1.0.exe`
 - The API route file stays in the codebase for dev mode
 - Production app functionality unchanged (still uses Electron's API handler)
 - If you get "EPERM" errors during build, close `route.ts` in your IDE first
+
+---
+
+## 2026-01-18: Cleaned Up Expression Maps from Repository
+
+### Problem
+The `expression-maps/` folder contained 88 committed expression map files (Vienna Symphonic Prime, Synchron Strings, Cremona Quartet, Met Ark) totaling ~97KB. These were personal library files that should not be in the repository.
+
+### Why This Happened
+The folder was created during development for testing and the files were accidentally committed. The folder should only exist locally for each user with their own expression maps.
+
+### Solution
+1. Removed all 88 expression map files from git tracking (`git rm -r expression-maps/`)
+2. Added `expression-maps/` to `.gitignore` to prevent future commits
+3. Updated README.md to clarify:
+   - The folder is auto-created by the app when first run
+   - Users add their own `.expressionmap` files locally
+   - Not included in the repository
+
+### Why This Is Better
+- **Cleaner repository:** Removed 97,045 lines of XML files
+- **User privacy:** Personal expression map libraries stay local
+- **Flexibility:** Each user has their own expression maps without conflicts
+- **Auto-creation:** Code in `src/app/api/expression-maps/route.ts` (line 36) and `electron/main.js` (line 22) creates the folder when needed
+
+### Files Modified
+- `.gitignore` - Added `expression-maps/` exclusion
+- `README.md` - Added note about auto-created folder
+- Removed 88 `.expressionmap` files from git tracking
+
+### For Users
+**Development mode:**
+- Run the app - `expression-maps/` folder is created automatically
+- Add your `.expressionmap` files there
+- Organize in subfolders if desired (e.g., `Strings/`, `Brass/`)
+
+**Standalone app:**
+- Use system tray menu: "Add Expression Maps..." or "Open Expression Maps Folder"
+- Location: `C:\Users\USERNAME\AppData\Local\Programs\cubby-remote\resources\expression-maps\`
