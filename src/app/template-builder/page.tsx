@@ -35,25 +35,107 @@ interface BaseTemplate {
   slots: TemplateSlot[];
 }
 
-// Known slot configurations from analyzed templates
-const KNOWN_SLOT_CONFIGS = [
-  {
-    trackName: 'Stradivari Violin',
-    expressionMapName: 'NICRQ Stradivari Violin Multi Mic Attribute',
-  },
-  {
-    trackName: 'Guarneri Violin',
-    expressionMapName: 'NICRQ Guarneri Violin Multi Mic Attribute',
-  },
-  {
-    trackName: 'Amati Violin',
-    expressionMapName: 'NICRQ Amati Viola Multi Mic Attribute',
-  },
-  {
-    trackName: 'Stradivari cello',
-    expressionMapName: 'NICRQ Stradivari Cello Multi Mic Attribute',
-  },
-];
+// Helper functions for .cpr analysis (ported from rename-tracks-to-expmaps.js)
+
+function findAllString(buffer: Uint8Array, str: string): number[] {
+  const encoder = new TextEncoder();
+  const searchBytes = encoder.encode(str);
+  const positions: number[] = [];
+
+  for (let i = 0; i <= buffer.length - searchBytes.length; i++) {
+    let match = true;
+    for (let j = 0; j < searchBytes.length && match; j++) {
+      if (buffer[i + j] !== searchBytes[j]) match = false;
+    }
+    if (match) positions.push(i);
+  }
+  return positions;
+}
+
+function readNullTerminatedString(buffer: Uint8Array, offset: number, maxLen: number = 200): string {
+  let end = offset;
+  while (end < offset + maxLen && buffer[end] !== 0) end++;
+  const decoder = new TextDecoder();
+  return decoder.decode(buffer.slice(offset, end));
+}
+
+// Find expression map assignments
+function findExpressionMapAssignments(buffer: Uint8Array) {
+  const assignments: Array<{expMapName: string; nameStart: number; nameLen: number; position: number}> = [];
+  const marker = 'All MIDI Inputs';
+  const positions = findAllString(buffer, marker);
+
+  for (let i = 0; i < positions.length - 1; i++) {
+    const pos1 = positions[i];
+    const pos2 = positions[i + 1];
+    const distance = pos2 - pos1;
+
+    if (distance >= 20 && distance <= 35) {
+      const afterSecond = pos2 + 16;
+
+      for (let j = 0; j < 20; j++) {
+        const checkPos = afterSecond + j;
+        if (checkPos + 10 >= buffer.length) break;
+
+        if (buffer[checkPos] === 0x01 &&
+            buffer[checkPos + 1] === 0x00 &&
+            buffer[checkPos + 2] === 0x00 &&
+            buffer[checkPos + 3] === 0x00) {
+
+          const lenByte = buffer[checkPos + 4];
+          if (lenByte > 10 && lenByte < 100) {
+            const nameLen = lenByte - 4;
+            const nameStart = checkPos + 5;
+            const name = readNullTerminatedString(buffer, nameStart, nameLen + 10);
+
+            if (name && name.length > 5 && !name.startsWith('\x00')) {
+              assignments.push({ expMapName: name, nameStart, nameLen: name.length, position: pos1 });
+              i++;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return assignments;
+}
+
+// Find track names - find ALL tracks, not just ones with "Bus UID"
+function findTrackNames(buffer: Uint8Array) {
+  const tracks: Array<{name: string; nameStart: number; nameLen: number; position: number}> = [];
+
+  for (let i = 0; i < buffer.length - 100; i++) {
+    // Look for Name field: Name\x00\x00\x08[00 00 00 len][name]
+    if (buffer[i] === 0x4e && buffer[i + 1] === 0x61 && buffer[i + 2] === 0x6d &&
+        buffer[i + 3] === 0x65 && buffer[i + 4] === 0x00 && buffer[i + 5] === 0x00 &&
+        buffer[i + 6] === 0x08) {
+
+      const len = (buffer[i + 7] << 24) | (buffer[i + 8] << 16) | (buffer[i + 9] << 8) | buffer[i + 10];
+      if (len > 8 && len < 100) {
+        const nameLen = len - 4;
+        const nameStart = i + 11;
+        const decoder = new TextDecoder();
+        const name = decoder.decode(buffer.slice(nameStart, nameStart + nameLen)).replace(/\x00.*$/, '');
+
+        // Skip system tracks and empty names
+        const systemTracks = ['KT Out', 'Stereo In', 'Right', 'Stereo Out', 'Left', 'Input', 'Output'];
+        if (name && name.length > 1 && !systemTracks.some(st => name.startsWith(st))) {
+          tracks.push({ name, nameStart, nameLen, position: i });
+        }
+      }
+    }
+  }
+
+  // Remove duplicates (keep first occurrence)
+  const seen = new Set();
+  return tracks.filter(t => {
+    if (seen.has(t.name)) return false;
+    seen.add(t.name);
+    return true;
+  });
+}
 
 export default function TemplateBuilder() {
   const [serverMaps, setServerMaps] = useState<MapFile[]>([]);
@@ -61,11 +143,13 @@ export default function TemplateBuilder() {
   const [selectedMaps, setSelectedMaps] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number; message: string } | null>(null);
 
   // Base template state
   const [baseTemplate, setBaseTemplate] = useState<BaseTemplate | null>(null);
   const [mode, setMode] = useState<'dawproject' | 'cpr'>('cpr'); // Default to cpr mode
   const [savedTemplateName, setSavedTemplateName] = useState<string | null>(null);
+  const [renamedBuffer, setRenamedBuffer] = useState<Uint8Array | null>(null);
 
   // Load saved template from localStorage on mount
   useEffect(() => {
@@ -182,68 +266,85 @@ export default function TemplateBuilder() {
     const buffer = await file.arrayBuffer();
     const uint8 = new Uint8Array(buffer);
 
-    // Helper to find string in buffer
-    const findString = (searchStr: string): number => {
-      const searchBytes = new TextEncoder().encode(searchStr);
-      for (let i = 0; i < uint8.length - searchBytes.length; i++) {
-        let match = true;
-        for (let j = 0; j < searchBytes.length && match; j++) {
-          if (uint8[i + j] !== searchBytes[j]) match = false;
-        }
-        if (match) return i;
-      }
-      return -1;
-    };
+    console.log('Analyzing template:', file.name);
 
-    // Count occurrences
-    const countOccurrences = (searchStr: string): number => {
-      const searchBytes = new TextEncoder().encode(searchStr);
-      let count = 0;
-      let pos = 0;
-      while (pos < uint8.length - searchBytes.length) {
-        let match = true;
-        for (let j = 0; j < searchBytes.length && match; j++) {
-          if (uint8[pos + j] !== searchBytes[j]) match = false;
-        }
-        if (match) {
-          count++;
-          pos += searchBytes.length;
-        } else {
-          pos++;
-        }
-      }
-      return count;
-    };
+    // Find track names and expression maps using generic analysis
+    const tracks = findTrackNames(uint8);
+    const assignments = findExpressionMapAssignments(uint8);
 
-    // Detect slots from known configurations
+    console.log(`Found ${tracks.length} tracks and ${assignments.length} expression map assignments`);
+
+    if (tracks.length === 0 && assignments.length === 0) {
+      alert('Could not detect any tracks or expression maps in this template. Make sure it\'s a valid Cubase .cpr file with tracks that have expression maps assigned.');
+      return;
+    }
+
+    // Create slots by matching tracks to expression maps
     const slots: TemplateSlot[] = [];
+    const systemTracks = ['KT Out 1', 'Stereo In', 'Right', 'Stereo Out', 'Left'];
 
-    KNOWN_SLOT_CONFIGS.forEach((config, index) => {
-      const trackPos = findString(config.trackName);
-      const expMapPos = findString(config.expressionMapName);
+    // Match expression maps to tracks by proximity and name similarity
+    for (let i = 0; i < assignments.length; i++) {
+      const assignment = assignments[i];
 
-      if (trackPos !== -1 && expMapPos !== -1) {
-        const trackCount = countOccurrences(config.trackName);
-        const expMapCount = countOccurrences(config.expressionMapName);
+      // Find best matching track - prioritize proximity, then name similarity
+      let bestMatch = null;
+      let bestScore = 0;
 
-        console.log(`Slot ${index + 1}: "${config.trackName}" (${trackCount}x), "${config.expressionMapName}" (${expMapCount}x)`);
+      for (const track of tracks) {
+        if (systemTracks.includes(track.name)) continue;
 
+        const expLower = assignment.expMapName.toLowerCase();
+        const trackLower = track.name.toLowerCase();
+
+        // Calculate proximity score (closer is better)
+        const distance = Math.abs(assignment.position - track.position);
+        const proximityScore = distance < 100000 ? 100 : (distance < 500000 ? 50 : 0);
+
+        // Calculate name similarity score
+        let nameScore = 0;
+        if (expLower.includes(trackLower)) {
+          nameScore = trackLower.length * 10; // Prefer name matches highly
+        }
+
+        const totalScore = proximityScore + nameScore;
+
+        if (totalScore > bestScore) {
+          bestScore = totalScore;
+          bestMatch = track;
+        }
+      }
+
+      // Extract a clean track name from the expression map name
+      // Remove common suffixes like "Multi Mic Attribute", "Attribute", etc.
+      let cleanName = assignment.expMapName
+        .replace(/\s*Multi\s*Mic\s*Attribute$/i, '')
+        .replace(/\s*Attribute$/i, '')
+        .replace(/^NICRQ\s*/i, '')
+        .replace(/^VSL\s*/i, '')
+        .trim();
+
+      if (bestMatch) {
+        // We found a matching track - use its actual name and length
         slots.push({
-          slotIndex: index,
-          trackName: config.trackName,
-          trackNameMaxLength: config.trackName.length,
-          expressionMapName: config.expressionMapName,
-          expressionMapMaxLength: config.expressionMapName.length,
-          newTrackName: '',
+          slotIndex: i,
+          trackName: bestMatch.name,
+          trackNameMaxLength: bestMatch.nameLen,
+          expressionMapName: assignment.expMapName,
+          expressionMapMaxLength: assignment.nameLen,
+          newTrackName: cleanName.substring(0, bestMatch.nameLen),
           newExpressionMapName: '',
         });
       }
-    });
+      // Note: If no track found, the expression map might be on a system track or the track detection failed
+    }
 
     if (slots.length === 0) {
-      alert('Could not detect any track slots in this template. Make sure it uses Cremona Quartet instruments.');
+      alert(`Found ${assignments.length} expression map assignments but could not match any to actual tracks. The template may have expression maps assigned to group tracks or buses instead of individual instrument tracks.`);
       return;
     }
+
+    console.log(`Matched ${slots.length} tracks out of ${assignments.length} expression map assignments`);
 
     const template: BaseTemplate = {
       fileName: file.name,
@@ -254,6 +355,7 @@ export default function TemplateBuilder() {
 
     setBaseTemplate(template);
     saveTemplateToStorage(template);
+    setRenamedBuffer(null); // Clear any previous renamed buffer
 
     // Auto-switch to CPR mode
     setMode('cpr');
@@ -349,11 +451,12 @@ export default function TemplateBuilder() {
     setBaseTemplate({ ...baseTemplate, slots: newSlots });
   };
 
-  // Generate modified .cpr
-  const generateCpr = async () => {
+  // Perform track renaming
+  const performRenaming = async () => {
     if (!baseTemplate) return;
 
     setGenerating(true);
+    setProgress({ current: 0, total: baseTemplate.slots.length, message: 'Starting...' });
 
     try {
       const uint8 = new Uint8Array(baseTemplate.buffer);
@@ -365,8 +468,18 @@ export default function TemplateBuilder() {
         return str.padEnd(len, ' ');
       };
 
-      // Helper to replace string in buffer
-      const replaceInBuffer = (buf: Uint8Array, oldStr: string, newStr: string) => {
+      // Helper to replace string in buffer (async with progress)
+      const replaceInBuffer = async (buf: Uint8Array, oldStr: string, newStr: string, trackIndex: number, trackName: string) => {
+        // Update progress
+        setProgress({
+          current: trackIndex,
+          total: baseTemplate.slots.length,
+          message: `Renaming: ${trackName}`
+        });
+
+        // Yield to browser to update UI
+        await new Promise(resolve => setTimeout(resolve, 0));
+
         const paddedNew = padToLength(newStr, oldStr.length);
         const oldBytes = new TextEncoder().encode(oldStr);
         const newBytes = new TextEncoder().encode(paddedNew);
@@ -388,37 +501,56 @@ export default function TemplateBuilder() {
         return count;
       };
 
-      // Replace expression maps FIRST (they contain track names)
-      for (const slot of baseTemplate.slots) {
-        if (slot.newExpressionMapName && slot.expressionMapName) {
-          replaceInBuffer(newBuffer, slot.expressionMapName, slot.newExpressionMapName);
-        }
-      }
-
-      // Then replace track names
-      for (const slot of baseTemplate.slots) {
+      // Replace track names
+      for (let i = 0; i < baseTemplate.slots.length; i++) {
+        const slot = baseTemplate.slots[i];
         if (slot.newTrackName && slot.trackName) {
-          replaceInBuffer(newBuffer, slot.trackName, slot.newTrackName);
+          await replaceInBuffer(newBuffer, slot.trackName, slot.newTrackName, i + 1, slot.trackName);
         }
       }
 
-      // Download
-      const blob = new Blob([newBuffer], { type: 'application/octet-stream' });
+      // Store the renamed buffer
+      setRenamedBuffer(newBuffer);
+
+      // Final step
+      setProgress({
+        current: baseTemplate.slots.length,
+        total: baseTemplate.slots.length,
+        message: 'Complete! Ready to download.'
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      console.log('Track renaming complete');
+    } catch (error) {
+      console.error('Failed to rename tracks:', error);
+      alert('Failed to rename tracks');
+    } finally {
+      setGenerating(false);
+      setProgress(null);
+    }
+  };
+
+  // Download renamed template
+  const downloadRenamed = () => {
+    if (!renamedBuffer || !baseTemplate) return;
+
+    try {
+      // Create a new Uint8Array to ensure proper ArrayBuffer type
+      const buffer = new Uint8Array(renamedBuffer);
+      const blob = new Blob([buffer], { type: 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'Generated-Template.cpr';
+      a.download = `${baseTemplate.fileName.replace('.cpr', '')}-renamed.cpr`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      console.log('Generated .cpr template');
+      console.log('Downloaded renamed template');
     } catch (error) {
-      console.error('Failed to generate .cpr:', error);
-      alert('Failed to generate .cpr template');
-    } finally {
-      setGenerating(false);
+      console.error('Failed to download:', error);
+      alert('Failed to download template');
     }
   };
 
@@ -624,7 +756,7 @@ export default function TemplateBuilder() {
       <div className="max-w-7xl mx-auto">
         <h1 className="text-3xl font-bold mb-2">Cubase Template Builder</h1>
         <p className="text-gray-400 mb-6">
-          Create Cubase templates with Kontakt and expression maps pre-loaded.
+          Create a blank template from your loaded expression maps with proper track names for this app to work, or drop your existing template and have the tracks renamed. For this app to work, track names must match the names of your loaded expression maps.
         </p>
 
         {/* Mode Tabs */}
@@ -710,10 +842,9 @@ export default function TemplateBuilder() {
             <div className="bg-purple-900/30 border border-purple-500/50 rounded-lg p-4">
               <h3 className="font-bold text-purple-300 mb-2">How This Works</h3>
               <p className="text-gray-300 text-sm">
-                Upload your base template (with Kontakt + instruments pre-loaded), then select which expression maps
-                to assign to each track slot. The tool renames the tracks and expression map references in the .cpr file.
-                <strong className="text-purple-300"> The Kontakt instruments remain the same</strong> — this generates
-                variations of your base template with different naming.
+                Drop your Cubase Template and your tracks will be renamed automatically for Cubby Remote to work.
+                <br />
+                <span className="text-yellow-400">⚠️ Be sure to make a backup of your project first.</span>
               </p>
             </div>
 
@@ -786,59 +917,27 @@ export default function TemplateBuilder() {
                 )}
               </div>
 
-              {/* Slot Assignment */}
+              {/* Track Renaming Preview */}
               <div className="bg-gray-800 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold">2. Assign Expression Maps</h2>
-                  {baseTemplate && (
-                    <button
-                      onClick={autoAssignMaps}
-                      className="text-sm bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded transition-colors"
-                    >
-                      Auto-Match
-                    </button>
-                  )}
-                </div>
+                <h2 className="text-xl font-bold mb-4">2. Preview Track Renaming</h2>
 
                 {!baseTemplate ? (
                   <div className="text-center text-gray-500 py-8">
                     <p>Upload a base template first</p>
                   </div>
                 ) : (
-                  <div className="space-y-4 max-h-[500px] overflow-y-auto">
+                  <div className="space-y-2 max-h-[500px] overflow-y-auto">
                     {baseTemplate.slots.map((slot, i) => (
                       <div key={i} className="bg-gray-700 rounded-lg p-3">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <div className="text-xs text-gray-500">Slot {i + 1}</div>
-                            <div className="font-medium text-sm">{slot.trackName}</div>
-                          </div>
-                          <div className="text-xs text-gray-500 text-right">
-                            max {slot.trackNameMaxLength} chars
-                          </div>
+                        <div className="text-xs text-gray-500 mb-1">Track {i + 1}</div>
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-gray-400">{slot.trackName}</span>
+                          <span className="text-purple-400">→</span>
+                          <span className="text-green-400 font-medium">{slot.newTrackName}</span>
                         </div>
-                        <select
-                          value={slot.newTrackName ? serverMaps.find(m => m.name.startsWith(slot.newTrackName.trim()))?.path || '' : ''}
-                          onChange={(e) => assignMapToSlot(i, e.target.value)}
-                          className="w-full bg-gray-600 text-white rounded px-3 py-2 text-sm"
-                        >
-                          <option value="">-- Select expression map --</option>
-                          {serverMaps.map(map => (
-                            <option
-                              key={map.path}
-                              value={map.path}
-                              className={map.name.length > slot.trackNameMaxLength ? 'text-yellow-400' : ''}
-                            >
-                              {map.name} {map.name.length > slot.trackNameMaxLength ? `(${map.name.length} chars - will truncate)` : ''}
-                            </option>
-                          ))}
-                        </select>
-                        {slot.newTrackName && (
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className="text-purple-400">→</span>
-                            <span className="text-green-400 text-sm truncate">{slot.newTrackName}</span>
-                          </div>
-                        )}
+                        <div className="text-xs text-gray-500 mt-1">
+                          Expression Map: {slot.expressionMapName}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -847,38 +946,70 @@ export default function TemplateBuilder() {
 
               {/* Generate */}
               <div className="bg-gray-800 rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-4">3. Generate</h2>
+                <h2 className="text-xl font-bold mb-4">3. Generate Renamed Template</h2>
 
-                {baseTemplate && baseTemplate.slots.some(s => s.newTrackName) ? (
+                {baseTemplate && baseTemplate.slots.length > 0 ? (
                   <>
-                    <div className="bg-gray-700 rounded-lg p-4 mb-6">
-                      <h3 className="font-semibold mb-3 text-sm">Changes Preview:</h3>
-                      {baseTemplate.slots.map((slot, i) => (
-                        <div key={i} className="text-xs py-1 border-b border-gray-600 last:border-0">
-                          <div className="text-gray-500">{slot.trackName}</div>
-                          <div className="text-green-400 flex items-center gap-1">
-                            <span>→</span>
-                            <span>{slot.newTrackName || '(unchanged)'}</span>
+                    {progress ? (
+                      <div className="space-y-4">
+                        <div className="bg-gray-700 rounded-lg p-4">
+                          <div className="flex justify-between text-sm mb-2">
+                            <span className="text-gray-300">{progress.message}</span>
+                            <span className="text-purple-400">{progress.current} / {progress.total}</span>
+                          </div>
+                          <div className="w-full bg-gray-600 rounded-full h-2 overflow-hidden">
+                            <div
+                              className="bg-gradient-to-r from-purple-500 to-pink-500 h-full transition-all duration-300"
+                              style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                            />
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ) : renamedBuffer ? (
+                      <>
+                        <div className="bg-green-900/30 border border-green-500/50 rounded-lg p-4 mb-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-green-400 text-xl">✓</span>
+                            <span className="text-green-400 font-medium">Renaming Complete!</span>
+                          </div>
+                          <p className="text-gray-400 text-sm mt-2">
+                            {baseTemplate.slots.length} tracks renamed. Ready to download.
+                          </p>
+                        </div>
 
-                    <button
-                      onClick={generateCpr}
-                      disabled={generating}
-                      className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:from-gray-600 disabled:to-gray-600 text-white font-bold py-4 px-6 rounded-lg transition-all transform hover:scale-[1.02]"
-                    >
-                      {generating ? 'Generating...' : '🎹 Generate .cpr Template'}
-                    </button>
+                        <button
+                          onClick={downloadRenamed}
+                          className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-4 px-6 rounded-lg transition-all transform hover:scale-[1.02]"
+                        >
+                          💾 Download Renamed Template
+                        </button>
 
-                    <p className="mt-4 text-xs text-gray-500 text-center">
-                      Kontakt instances stay intact with same instruments loaded
-                    </p>
+                        <button
+                          onClick={() => setRenamedBuffer(null)}
+                          className="w-full mt-2 bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium py-2 px-4 rounded-lg transition-all"
+                        >
+                          Start Over
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={performRenaming}
+                          disabled={generating}
+                          className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:from-gray-600 disabled:to-gray-600 text-white font-bold py-4 px-6 rounded-lg transition-all transform hover:scale-[1.02]"
+                        >
+                          🎹 Start Renaming
+                        </button>
+
+                        <p className="mt-4 text-xs text-gray-400 text-center">
+                          Track names will be updated to match expression maps. Expression map assignments remain unchanged.
+                        </p>
+                      </>
+                    )}
                   </>
                 ) : (
                   <div className="text-center text-gray-500 py-8">
-                    <p className="text-sm">Assign at least one expression map to generate</p>
+                    <p className="text-sm">Upload a template first</p>
                   </div>
                 )}
               </div>
@@ -886,11 +1017,10 @@ export default function TemplateBuilder() {
 
             {/* Usage Note */}
             <div className="bg-gray-800/50 rounded-lg p-4">
-              <h3 className="font-semibold mb-2 text-yellow-400">💡 Best Practice</h3>
+              <h3 className="font-semibold mb-2 text-yellow-400">💡 How It Works</h3>
               <p className="text-sm text-gray-400">
-                Create ONE base template in Cubase with your Kontakt instruments and expression maps configured.
-                Then use this tool to generate unlimited variations by selecting different expression maps for each slot.
-                This is useful for creating different track orderings or configurations from the same instrument set.
+                This tool analyzes your Cubase template and renames tracks to match their assigned expression map names.
+                This enables Cubby Remote's auto-switching feature - when you select a track in Cubase, the matching expression map loads automatically.
               </p>
             </div>
           </div>

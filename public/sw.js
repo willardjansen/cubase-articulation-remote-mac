@@ -1,5 +1,5 @@
 // Service Worker for Cubby Remote
-const CACHE_NAME = 'cubby-remote-v1';
+const CACHE_NAME = 'cubby-remote-v10';
 const STATIC_ASSETS = [
   '/',
   '/icon.svg',

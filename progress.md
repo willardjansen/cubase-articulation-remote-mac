@@ -245,6 +245,82 @@ This bridges the gap for users who already have templates with expression maps a
 
 ---
 
+## 2026-01-25: Template Builder Frontend Improvements
+
+### Problem
+The Template Builder frontend had several UX and functional issues:
+1. **Hard-coded detection** - Only worked with "Cremona Quartet" instruments
+2. **Manual selection UI** - Showed dropdown selectors to manually assign expression maps (backwards workflow)
+3. **Blocking processing** - Renaming blocked the UI, causing "Page Unresponsive" browser warnings
+4. **Limited track detection** - Only found tracks with "Bus UID" marker (missed ~130 tracks in a 228-track template)
+5. **Confusing workflow** - Download button triggered renaming AND download in one step
+
+### Solution
+
+**1. Generic .cpr Analysis**
+- Removed hard-coded `KNOWN_SLOT_CONFIGS` that only worked with Cremona Quartet
+- Ported analysis functions from `rename-tracks-to-expmaps.js` to frontend:
+  - `findTrackNames()` - Finds ALL tracks (not just main instrument tracks)
+  - `findExpressionMapAssignments()` - Finds ALL expression map assignments
+  - Proximity-based matching - Prioritizes tracks near the expression map in the file
+
+**2. Improved Track Detection**
+- **Removed "Bus UID" requirement** - Now finds MIDI tracks, instrument tracks, group tracks, FX tracks
+- **Proximity scoring** - Tracks within 100KB of expression map get 100 points, within 500KB get 50 points
+- **Name similarity scoring** - Expression map name containing track name gets 10× score multiplier
+- Result: Detects many more tracks (98 → 228 in test template)
+
+**3. Automatic Track Renaming**
+- Automatically extracts clean track names from expression maps
+- Removes common suffixes: "Multi Mic Attribute", "Attribute"
+- Removes vendor prefixes: "NICRQ", "VSL"
+- Example: "NICRQ Stradivari Violin Multi Mic Attribute" → "Stradivari Violin"
+
+**4. Non-Blocking UI with Progress Feedback**
+- Separated renaming logic from download logic
+- Added progress bar showing "Renaming: Track Name" with live count
+- `await setTimeout(0)` after each track to yield to browser (prevents "Page Unresponsive")
+- Green success state when complete: "✓ Renaming Complete! X tracks renamed"
+
+**5. Two-Step Workflow**
+- **Step 1**: Click "🎹 Start Renaming" → Shows progress bar → Completes with success message
+- **Step 2**: Click "💾 Download Renamed Template" → Instant download (no processing)
+- Optional "Start Over" button to load a new template
+
+**6. User Guide Integration**
+- Added Template Builder section to website setup guide (`cubby-remote-website/app/setup/page.tsx`)
+- Added "User Guide" button (? icon) in main app header
+- Links to `https://cubby-remote.com/setup` with full documentation
+
+### Files Modified
+- `src/app/template-builder/page.tsx` - Complete rewrite of analysis and UI logic
+- `src/app/page.tsx` - Added User Guide button
+- `public/sw.js` - Updated cache version (v9 → v10)
+- `../cubby-remote-website/app/setup/page.tsx` - Added Template Builder documentation
+
+### Technical Details
+- **Track detection**: Searches for `Name\x00\x00\x08[len][name]` pattern in binary .cpr file
+- **Expression map detection**: Looks for paired "All MIDI Inputs" markers with expression map names
+- **Proximity algorithm**: Uses file position to match tracks to nearby expression maps
+- **Progress tracking**: React state with async setTimeout yields for UI responsiveness
+
+### User Benefit
+Users can now:
+1. **Use ANY Cubase template** (not just Cremona Quartet)
+2. **Rename ALL tracks** with expression maps (even without instruments loaded)
+3. **See progress** in real-time without browser freezing
+4. **Clear workflow** - separate renaming from downloading
+5. **Access documentation** directly from the app
+
+### Testing
+Tested with 228-track template containing Vienna Symphonic Library expression maps:
+- Successfully detected and renamed 228 tracks
+- Process completed without "Page Unresponsive" warnings
+- Progress bar updated smoothly showing each track
+- Download triggered only when user clicked download button
+
+---
+
 ## Reference Docs
 - `/Users/willardjansen/dev/cubby-remote/update docs/kontakt-loader-spec.md`
 - `/Users/willardjansen/dev/cubby-remote/update docs/nkm-script-analysis.md`
