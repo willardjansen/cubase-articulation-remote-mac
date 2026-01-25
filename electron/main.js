@@ -381,6 +381,11 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: 'Analyze Template (.cpr)...',
+      click: handleAnalyzeTemplate
+    },
+    { type: 'separator' },
+    {
       label: 'Open Cubase Script Folder',
       click: () => {
         shell.openPath(getCubaseScriptDir());
@@ -455,6 +460,136 @@ async function handleAddExpressionMaps() {
 
   if (count > 0) {
     console.log(`\nAdded ${count} expression map(s)`);
+  }
+}
+
+// Handle analyzing Cubase template for track/expression map mappings
+async function handleAnalyzeTemplate() {
+  // Import the analyzer
+  const analyzerPath = isDev
+    ? path.join(__dirname, '..', 'rename-tracks-to-expmaps.js')
+    : path.join(process.resourcesPath, 'app.asar.unpacked', 'rename-tracks-to-expmaps.js');
+
+  if (!fs.existsSync(analyzerPath)) {
+    dialog.showErrorBox('Error', `Analyzer not found at:\n${analyzerPath}`);
+    return;
+  }
+
+  const { analyzeCprFile, copyExpressionMaps } = require(analyzerPath);
+
+  // Select .cpr file
+  const result = await dialog.showOpenDialog({
+    title: 'Select Cubase Template (.cpr)',
+    filters: [
+      { name: 'Cubase Projects', extensions: ['cpr'] }
+    ],
+    properties: ['openFile']
+  });
+
+  if (result.canceled || result.filePaths.length === 0) return;
+
+  const cprFile = result.filePaths[0];
+
+  try {
+    // Analyze the template
+    const analysis = analyzeCprFile(cprFile);
+
+    if (analysis.mappings.length === 0) {
+      const trackList = analysis.tracks.length > 0
+        ? `\n\nTracks found:\n${analysis.tracks.slice(0, 10).map(t => `  • ${t}`).join('\n')}${analysis.tracks.length > 10 ? `\n  ... and ${analysis.tracks.length - 10} more` : ''}`
+        : '';
+
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'No Mappings Found',
+        message: 'No track/expression map mappings found.',
+        detail: `This template may not have expression maps assigned.${trackList}`,
+        buttons: ['OK']
+      });
+      return;
+    }
+
+    // Build summary message
+    let message = `Found ${analysis.mappings.length} track → expression map mapping(s):\n\n`;
+    analysis.mappings.forEach((m, i) => {
+      message += `${i + 1}. "${m.trackName}"\n    → ${m.expMapFileName}\n\n`;
+    });
+
+    if (analysis.unmatchedExpMaps.length > 0) {
+      message += `\n⚠ Unmatched expression maps: ${analysis.unmatchedExpMaps.length}`;
+    }
+    if (analysis.unmatchedTracks.length > 0) {
+      message += `\n⚠ Unmatched tracks: ${analysis.unmatchedTracks.length}`;
+    }
+
+    // Ask user what to do
+    const response = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Template Analysis',
+      message: `Analyzed: ${path.basename(cprFile)}`,
+      detail: message,
+      buttons: ['Copy Expression Maps', 'Close'],
+      defaultId: 0,
+      cancelId: 1
+    });
+
+    if (response.response === 0) {
+      // User wants to copy expression maps
+      await handleCopyExpressionMaps(analysis.mappings, copyExpressionMaps);
+    }
+
+  } catch (err) {
+    dialog.showErrorBox('Error', `Failed to analyze template:\n${err.message}`);
+  }
+}
+
+// Handle copying expression maps with track-matching names
+async function handleCopyExpressionMaps(mappings, copyExpressionMaps) {
+  // Ask for source directory
+  const sourceResult = await dialog.showOpenDialog({
+    title: 'Select Expression Maps Source Folder',
+    message: 'Select the folder containing your expression map files',
+    properties: ['openDirectory']
+  });
+
+  if (sourceResult.canceled) return;
+
+  const sourceDir = sourceResult.filePaths[0];
+  const destDir = getExpressionMapsDir();
+
+  try {
+    const results = copyExpressionMaps(mappings, sourceDir, destDir);
+
+    let message = '';
+    if (results.copied.length > 0) {
+      message += `✓ Copied ${results.copied.length} expression map(s):\n`;
+      results.copied.forEach(c => {
+        message += `  • ${c.track}.expressionmap\n`;
+      });
+    }
+
+    if (results.notFound.length > 0) {
+      message += `\n✗ Not found (${results.notFound.length}):\n`;
+      results.notFound.forEach(n => {
+        message += `  • ${n.expected}\n`;
+      });
+    }
+
+    dialog.showMessageBox({
+      type: results.notFound.length > 0 ? 'warning' : 'info',
+      title: 'Copy Complete',
+      message: `Copied to: ${destDir}`,
+      detail: message,
+      buttons: ['Open Folder', 'Close'],
+      defaultId: 0
+    }).then(response => {
+      if (response.response === 0) {
+        shell.openPath(destDir);
+      }
+    });
+
+  } catch (err) {
+    dialog.showErrorBox('Error', `Failed to copy expression maps:\n${err.message}`);
   }
 }
 

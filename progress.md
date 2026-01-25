@@ -87,3 +87,165 @@ The folder was created during development for testing and the files were acciden
 **Standalone app:**
 - Use system tray menu: "Add Expression Maps..." or "Open Expression Maps Folder"
 - Location: `C:\Users\USERNAME\AppData\Local\Programs\cubby-remote\resources\expression-maps\`
+
+---
+
+## 2026-01-24: Cubby Loader / Template Builder Development (In Progress)
+
+### Goal
+Build a tool that automates creating Cubase templates with:
+1. Tracks named after expression maps
+2. Expression maps assigned to tracks
+3. Kontakt instruments loaded (future phase)
+
+### Problem Being Solved
+For large orchestral templates (hundreds/1000+ tracks), manually:
+- Adding Kontakt instances to each track
+- Loading instruments into Kontakt
+- Assigning expression maps to tracks
+
+...is extremely tedious and time-consuming.
+
+### Approach: 3-Phase Workflow
+
+**Phase 1 (EXISTS - Template Builder):**
+- User selects expression maps from `/expression-maps/` folder
+- Generates DAWproject with tracks named after selected expression maps
+- User imports DAWproject into Cubase → gets empty tracks with correct names
+- User saves as .cpr
+
+**Phase 2 (IN PROGRESS):**
+- User feeds .cpr back into Template Builder
+- Tool matches track names to expression maps in the folder
+- Tool assigns expression maps to tracks
+- Outputs modified .cpr with expression maps assigned
+
+**Phase 3 (FUTURE):**
+- Add Kontakt instrument loading
+
+### Technical Findings
+
+#### .cpr File Structure
+- Cubase .cpr files are RIFF-based binary format ("RIF2" header)
+- Expression map assignments stored with pattern: `"All MIDI Inputs" ... "All MIDI Inputs" ... [length byte] [exp map name] [null] [BOM]`
+- Expression map data is EMBEDDED in .cpr (not just referenced by name)
+- PInstrumentMap sections contain the actual expression map data
+
+#### Expression Map Assignment Structure
+Found at 4 locations in 4-track base template:
+- 0x4f9318: "NICRQ Stradivari Violin Multi Mic Attribute"
+- 0xa224cf: "NICRQ Guarneri Violin Multi Mic Attribute"
+- 0xefa8ae: "NICRQ Amati Viola Multi Mic Attribute"
+- 0x143e059: "NICRQ Stradivari Cello Multi Mic Attribute"
+
+Length byte format: `name length + 4` (accounts for null + BOM EF BB BF)
+
+### Tools Created
+
+1. **`cpr-expression-map-tool.js`** - Finds and replaces expression map assignments in .cpr files
+2. **`phase2-assign-expression-maps.js`** - Matches expression maps from folder to .cpr assignments
+3. **`generate-template.js`** - Generates .cpr from base template with renamed tracks/expression maps
+4. **`analyze-template.js`** - Analyzes .cpr files to find track names and expression maps
+
+### Key Discovery: Binary Modification Limitations
+
+**The Problem:** Cubase .cpr files use RIFF binary format with strict size requirements:
+- Changing string lengths (track names, expression map names) breaks nested chunk sizes
+- Expression map DATA is embedded in .cpr files (PInstrumentMap sections), not just referenced by name
+- Simply replacing names with padding doesn't work - Cubase uses the embedded articulation data
+
+**Attempted Solutions That Failed:**
+1. **Name replacement with padding** - Names changed but articulations were still from placeholder
+2. **Binary splice** - Extracting PInstrumentMap sections and splicing into target broke RIFF structure
+3. **RIFF header fix** - Updating main RIF2 size field wasn't enough; nested chunk sizes also broken
+
+**Research Findings:**
+- Cubase Project Logical Editor cannot assign expression maps (confirmed by Steinberg)
+- MIDI Remote API has no documented support for expression map assignment
+- No native batch assignment feature exists in Cubase
+
+### Final Solution: Track ↔ Expression Map Mapping Tool
+
+Instead of modifying .cpr files (risky), we created a tool that enables auto-switching by **copying expression map files with track-matching names**.
+
+**Tool:** `rename-tracks-to-expmaps.js`
+
+**How it works:**
+1. Analyzes .cpr template to find track names and their expression map assignments
+2. Matches tracks to expression maps by name similarity
+3. Copies expression map files with new names matching track names
+4. Auto-switching now works: track "Stradivari Violin" → loads "Stradivari Violin.expressionmap"
+
+**Usage:**
+```bash
+# Analyze template
+node rename-tracks-to-expmaps.js template.cpr
+
+# Copy expression maps with track-matching names
+node rename-tracks-to-expmaps.js template.cpr --copy-maps ~/ExpressionMaps ./expression-maps
+```
+
+**Features:**
+- Finds track names (Name fields followed by "Bus UID" marker)
+- Finds expression map assignments ("All MIDI Inputs" pattern)
+- Detects mismatches (e.g., track "Amati Violin" with "Amati Viola" expression map)
+- Searches subdirectories when copying files
+- Shows both matched and unmatched items
+
+### Workflow for Large Templates
+
+1. **Create template in Cubase** with tracks and expression maps assigned
+2. **Run mapping tool** to analyze track → expression map relationships
+3. **Copy expression maps** with track-matching names using `--copy-maps`
+4. **Auto-switching works** - Cubby Remote loads correct expression map when track selected
+
+### Files
+- `rename-tracks-to-expmaps.js` - Final working mapping/copy tool (CLI + module)
+- `base-template-4tracks.cpr` - Test template with 4 tracks + Kontakt + expression maps
+
+---
+
+## 2026-01-25: Template Analyzer Added to Tray Menu
+
+### Feature
+Added "Analyze Template (.cpr)..." menu item to the system tray, providing GUI access to the track/expression map mapping tool.
+
+### How It Works
+1. User clicks tray icon → "Analyze Template (.cpr)..."
+2. File dialog opens to select a Cubase .cpr file
+3. Tool analyzes the template and shows:
+   - Track names found
+   - Expression map assignments
+   - Matched track → expression map pairs
+   - Unmatched items (potential mismatches)
+4. User can click "Copy Expression Maps" to:
+   - Select source folder containing expression maps
+   - Tool copies files to app's expression-maps folder
+   - Files renamed to match track names (enables auto-switching)
+
+### Implementation
+- Refactored `rename-tracks-to-expmaps.js` to export functions for module use
+- Added `analyzeCprFile()` and `copyExpressionMaps()` as reusable functions
+- CLI functionality preserved (`node rename-tracks-to-expmaps.js template.cpr`)
+- Added menu item and handlers in `electron/main.js`
+- Added script to `asarUnpack` in `electron-builder.yml` for production builds
+
+### Files Modified
+- `rename-tracks-to-expmaps.js` - Added module exports, refactored for dual CLI/module use
+- `electron/main.js` - Added `handleAnalyzeTemplate()` and `handleCopyExpressionMaps()` functions
+- `electron-builder.yml` - Added `rename-tracks-to-expmaps.js` to unpacked files
+
+### User Benefit
+Users with existing large templates can now:
+1. Analyze their template to see track/expression map relationships
+2. Automatically copy expression maps with track-matching names
+3. Enable auto-switching without manually renaming files
+
+This bridges the gap for users who already have templates with expression maps assigned but where track names don't match expression map file names.
+
+---
+
+## Reference Docs
+- `/Users/willardjansen/dev/cubby-remote/update docs/kontakt-loader-spec.md`
+- `/Users/willardjansen/dev/cubby-remote/update docs/nkm-script-analysis.md`
+- `/Users/willardjansen/dev/cubby-remote/update docs/cubase-integration-guide.md`
