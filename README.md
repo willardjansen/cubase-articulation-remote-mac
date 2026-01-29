@@ -413,6 +413,16 @@ xattr -cr ~/Downloads/Cubby\ Remote.app
 
 Then try opening the app again.
 
+### Tablet shows ERR_SSL_PROTOCOL_ERROR
+
+If you see SSL errors when connecting from a tablet:
+
+1. Make sure you're using `http://` (not `https://`) in the URL
+2. Try using an **incognito/private browsing** window
+3. Clear the browser cache if you previously tried with HTTPS
+
+The app uses HTTP by default, which works fine for local networks.
+
 ### iPad shows "MIDI Bridge not running"
 
 Start the MIDI bridge server:
