@@ -111,8 +111,18 @@ function findNodeExecutable() {
     return process.execPath;
   }
 
-  // Common installation paths
+  // Common installation paths for macOS and Windows
   const possiblePaths = [
+    // macOS - Homebrew (Apple Silicon)
+    '/opt/homebrew/bin/node',
+    // macOS - Homebrew (Intel)
+    '/usr/local/bin/node',
+    // macOS - nvm default
+    path.join(process.env.HOME || '', '.nvm/versions/node/v20.0.0/bin/node'),
+    path.join(process.env.HOME || '', '.nvm/versions/node/v18.0.0/bin/node'),
+    // macOS - system
+    '/usr/bin/node',
+    // Windows
     'C:\\Program Files\\nodejs\\node.exe',
     'C:\\Program Files (x86)\\nodejs\\node.exe',
     path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'nodejs', 'node.exe'),
@@ -121,7 +131,7 @@ function findNodeExecutable() {
 
   // Check if any exist
   for (const nodePath of possiblePaths) {
-    if (fs.existsSync(nodePath)) {
+    if (nodePath && fs.existsSync(nodePath)) {
       console.log('Found Node.js at:', nodePath);
       return nodePath;
     }
