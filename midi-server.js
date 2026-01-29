@@ -6,15 +6,53 @@
  * - Receives MIDI from browser via WebSocket → sends to Cubase via "Browser to Cubase"
  * - Receives MIDI from Cubase via "Cubase to Browser" → sends to browser via WebSocket
  *
- * Usage: node midi-server.js
+ * Usage: node midi-server.js [port]
+ *
+ * If port is not specified, it will auto-find an available port starting from 7101.
+ * Avoids macOS reserved ports (5000, 7000 used by AirPlay).
  */
 
 const WebSocket = require('ws');
 const JZZ = require('jzz');
 const midi = require('midi');
 const os = require('os');
+const net = require('net');
 
-const WS_PORT = 7101;
+// Default port - can be overridden by command line arg or auto-detected
+const DEFAULT_WS_PORT = 7101;
+
+// Ports to avoid on macOS (used by system services)
+const MACOS_RESERVED_PORTS = [3000, 5000, 7000];
+
+// Check if a port is available
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, '0.0.0.0');
+  });
+}
+
+// Find an available port
+async function findAvailablePort(startPort, maxAttempts = 10) {
+  let port = startPort;
+  for (let i = 0; i < maxAttempts; i++) {
+    while (MACOS_RESERVED_PORTS.includes(port)) {
+      port++;
+    }
+    if (await isPortAvailable(port)) {
+      return port;
+    }
+    port++;
+  }
+  throw new Error(`Could not find available port after ${maxAttempts} attempts`);
+}
+
+// Will be set after finding available port
+let WS_PORT = DEFAULT_WS_PORT;
 
 // Get local IP address
 function getLocalIP() {
@@ -192,58 +230,98 @@ function sendMidi(status, data1, data2) {
 
 // Start WebSocket server
 function startServer() {
-  const wss = new WebSocket.Server({ port: WS_PORT });
+  return new Promise((resolve, reject) => {
+    const wss = new WebSocket.Server({ port: WS_PORT });
 
-  wss.on('connection', (ws, req) => {
-    const clientIp = req.socket.remoteAddress;
-    console.log(`📱 Client connected: ${clientIp}`);
+    wss.on('error', (err) => {
+      reject(err);
+    });
 
-    // Track this client for broadcasting
-    wsClients.add(ws);
+    wss.on('listening', () => {
+      resolve(wss);
+    });
 
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
+    wss.on('connection', (ws, req) => {
+      const clientIp = req.socket.remoteAddress;
+      console.log(`📱 Client connected: ${clientIp}`);
 
-        if (msg.type === 'midi') {
-          sendMidi(msg.status, msg.data1, msg.data2);
-        } else if (msg.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong', port: selectedOutPortName }));
+      // Track this client for broadcasting
+      wsClients.add(ws);
+
+      ws.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.type === 'midi') {
+            sendMidi(msg.status, msg.data1, msg.data2);
+          } else if (msg.type === 'ping') {
+            ws.send(JSON.stringify({ type: 'pong', port: selectedOutPortName, wsPort: WS_PORT }));
+          }
+        } catch (e) {
+          console.error('Invalid message:', e.message);
         }
-      } catch (e) {
-        console.error('Invalid message:', e.message);
-      }
+      });
+
+      ws.on('close', () => {
+        console.log(`📱 Client disconnected: ${clientIp}`);
+        wsClients.delete(ws);
+      });
+
+      // Send current status including the actual WebSocket port
+      ws.send(JSON.stringify({
+        type: 'connected',
+        port: selectedOutPortName,
+        inputPort: selectedInPortName,
+        status: midiOut ? 'ready' : 'no-midi',
+        trackSwitching: !!midiIn,
+        wsPort: WS_PORT
+      }));
     });
 
-    ws.on('close', () => {
-      console.log(`📱 Client disconnected: ${clientIp}`);
-      wsClients.delete(ws);
-    });
-
-    // Send current status
-    ws.send(JSON.stringify({
-      type: 'connected',
-      port: selectedOutPortName,
-      inputPort: selectedInPortName,
-      status: midiOut ? 'ready' : 'no-midi',
-      trackSwitching: !!midiIn
-    }));
+    const localIP = getLocalIP();
+    // Output port in a parseable format for Electron to read
+    console.log(`MIDI_SERVER_PORT=${WS_PORT}`);
+    console.log(`🌐 WebSocket server running on ws://localhost:${WS_PORT}`);
+    console.log(`\n📱 On your iPad, open: http://${localIP}:7100`);
+    console.log('   The app will automatically connect to this MIDI bridge.');
+    if (midiIn) {
+      console.log('   ✅ Track switching enabled - select tracks in Cubase to auto-switch maps');
+    }
+    console.log('');
   });
-
-  const localIP = getLocalIP();
-  console.log(`🌐 WebSocket server running on ws://localhost:${WS_PORT}`);
-  console.log(`\n📱 On your iPad, open: http://${localIP}:7100`);
-  console.log('   The app will automatically connect to this MIDI bridge.');
-  if (midiIn) {
-    console.log('   ✅ Track switching enabled - select tracks in Cubase to auto-switch maps');
-  }
-  console.log('');
 }
 
 // Main
 async function main() {
+  // Check for port argument
+  const portArg = process.argv[2];
+  if (portArg) {
+    WS_PORT = parseInt(portArg, 10);
+    if (isNaN(WS_PORT)) {
+      console.error('Invalid port argument');
+      process.exit(1);
+    }
+  } else {
+    // Auto-find available port
+    try {
+      WS_PORT = await findAvailablePort(DEFAULT_WS_PORT);
+      if (WS_PORT !== DEFAULT_WS_PORT) {
+        console.log(`ℹ️  Port ${DEFAULT_WS_PORT} was busy, using port ${WS_PORT}`);
+      }
+    } catch (err) {
+      console.error('Failed to find available port:', err.message);
+      process.exit(1);
+    }
+  }
+
   await initMidi();
-  startServer();
+
+  try {
+    await startServer();
+  } catch (err) {
+    console.error(`Failed to start WebSocket server on port ${WS_PORT}:`, err.message);
+    process.exit(1);
+  }
 }
 
 main().catch(console.error);

@@ -32,7 +32,67 @@ export type TrackNameCallback = (trackName: string) => void;
 
 const MIDI_OUTPUT_STORAGE_KEY = 'cubase-remote-midi-output';
 const MIDI_INPUT_STORAGE_KEY = 'cubase-remote-midi-input';
-const WS_PORT = 7101;
+
+// Default WebSocket port - will be discovered dynamically
+const DEFAULT_WS_PORT = 7101;
+
+// Fetch the current WebSocket port from the config API
+async function getWebSocketPort(): Promise<number> {
+  try {
+    // Try to get config from the server
+    const response = await fetch('/api/config');
+    if (response.ok) {
+      const config = await response.json();
+      if (config.wsPort) {
+        console.log(`[MIDI] Got WebSocket port from config: ${config.wsPort}`);
+        return config.wsPort;
+      }
+    }
+  } catch (e) {
+    // Config API not available (dev mode or standalone midi-server)
+    console.log('[MIDI] Config API not available, will probe for port');
+  }
+
+  // Probe for available WebSocket server (try ports 7101-7110)
+  const wsHost = window.location.hostname || 'localhost';
+  for (let port = DEFAULT_WS_PORT; port < DEFAULT_WS_PORT + 10; port++) {
+    try {
+      const available = await probeWebSocketPort(wsHost, port);
+      if (available) {
+        console.log(`[MIDI] Found WebSocket server on port ${port}`);
+        return port;
+      }
+    } catch (e) {
+      // Continue to next port
+    }
+  }
+
+  // Fall back to default
+  console.log(`[MIDI] Using default WebSocket port ${DEFAULT_WS_PORT}`);
+  return DEFAULT_WS_PORT;
+}
+
+// Quick probe to check if WebSocket server is available on a port
+function probeWebSocketPort(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://${host}:${port}`);
+    const timeout = setTimeout(() => {
+      ws.close();
+      resolve(false);
+    }, 500);
+
+    ws.onopen = () => {
+      clearTimeout(timeout);
+      ws.close();
+      resolve(true);
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timeout);
+      resolve(false);
+    };
+  });
+}
 
 class MidiHandler {
   private midiAccess: WebMidi.MIDIAccess | null = null;
@@ -48,8 +108,12 @@ class MidiHandler {
   private useWebSocket: boolean = false;
   private wsPortName: string = '';
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private wsPort: number = DEFAULT_WS_PORT;
 
   async initialize(): Promise<MidiState> {
+    // First, discover the WebSocket port
+    this.wsPort = await getWebSocketPort();
+
     // Try Web MIDI first
     if (navigator.requestMIDIAccess) {
       try {
@@ -84,7 +148,7 @@ class MidiHandler {
   // Connect to WebSocket just for receiving track names (used when Web MIDI handles output)
   private connectWebSocketForTrackNames(): void {
     const wsHost = window.location.hostname || 'localhost';
-    const wsUrl = `ws://${wsHost}:${WS_PORT}`;
+    const wsUrl = `ws://${wsHost}:${this.wsPort}`;
 
     console.log(`[MIDI] Connecting WebSocket for track names: ${wsUrl}`);
 
@@ -124,7 +188,7 @@ class MidiHandler {
     return new Promise((resolve) => {
       // Determine WebSocket URL based on current page location
       const wsHost = window.location.hostname || 'localhost';
-      const wsUrl = `ws://${wsHost}:${WS_PORT}`;
+      const wsUrl = `ws://${wsHost}:${this.wsPort}`;
 
       console.log(`[MIDI] Connecting to WebSocket: ${wsUrl}`);
 

@@ -1,12 +1,65 @@
 const { app, Tray, Menu, shell, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
 const { spawn } = require('child_process');
 
-// Configuration
-const WS_PORT = 7101;
-const NEXT_PORT = 7100;
+// Default ports - will be updated dynamically if busy
+const DEFAULT_WS_PORT = 7101;
+const DEFAULT_NEXT_PORT = 7100;
+
+// Ports to avoid on macOS (used by system services like AirPlay)
+const MACOS_RESERVED_PORTS = [3000, 5000, 7000];
+
+// Actual ports in use (set after finding available ports)
+let WS_PORT = DEFAULT_WS_PORT;
+let NEXT_PORT = DEFAULT_NEXT_PORT;
+
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Check if a port is available
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, '0.0.0.0');
+  });
+}
+
+// Find an available port
+async function findAvailablePort(startPort, maxAttempts = 10) {
+  let port = startPort;
+  for (let i = 0; i < maxAttempts; i++) {
+    while (MACOS_RESERVED_PORTS.includes(port)) {
+      port++;
+    }
+    if (await isPortAvailable(port)) {
+      return port;
+    }
+    port++;
+  }
+  throw new Error(`Could not find available port after ${maxAttempts} attempts starting from ${startPort}`);
+}
+
+// Find a pair of consecutive available ports
+async function findAvailablePortPair(startPort = 7100) {
+  let port = startPort;
+  for (let i = 0; i < 20; i++) {
+    while (MACOS_RESERVED_PORTS.includes(port) || MACOS_RESERVED_PORTS.includes(port + 1)) {
+      port++;
+    }
+    const httpAvailable = await isPortAvailable(port);
+    const wsAvailable = await isPortAvailable(port + 1);
+    if (httpAvailable && wsAvailable) {
+      return { httpPort: port, wsPort: port + 1 };
+    }
+    port++;
+  }
+  throw new Error('Could not find available port pair');
+}
 
 // References
 let tray = null;
@@ -117,9 +170,9 @@ function startMidiServer() {
   log(`Starting MIDI server with cwd: ${serverCwd}`);
   log(`Log file: ${logPath}`);
 
-  // Spawn midi-server.js using system Node.js
+  // Spawn midi-server.js using system Node.js, passing the WebSocket port as argument
   try {
-    midiServerProcess = spawn(nodeExecutable, [midiServerPath], {
+    midiServerProcess = spawn(nodeExecutable, [midiServerPath, WS_PORT.toString()], {
       stdio: ['ignore', 'pipe', 'pipe'], // Capture stdout/stderr
       cwd: serverCwd
     });
@@ -197,6 +250,18 @@ function startNextServer() {
 
       // Remove query string
       filePath = filePath.split('?')[0];
+
+      // Handle config API - returns current port configuration
+      if (filePath === '/api/config') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          wsPort: WS_PORT,
+          httpPort: NEXT_PORT
+        }));
+        return;
+      }
 
       // Handle API routes - proxy to expression-maps folder
       if (filePath.startsWith('/api/expression-maps')) {
@@ -366,6 +431,10 @@ function updateTrayMenu() {
     },
     {
       label: `iPad: http://${localIP}:${NEXT_PORT}`,
+      enabled: false
+    },
+    {
+      label: `Ports: HTTP ${NEXT_PORT}, WS ${WS_PORT}`,
       enabled: false
     },
     { type: 'separator' },
@@ -612,7 +681,23 @@ app.whenReady().then(async () => {
     app.dock.hide();
   }
 
-  // Start MIDI server as separate process
+  // Find available ports before starting servers
+  try {
+    const ports = await findAvailablePortPair(DEFAULT_NEXT_PORT);
+    NEXT_PORT = ports.httpPort;
+    WS_PORT = ports.wsPort;
+
+    if (NEXT_PORT !== DEFAULT_NEXT_PORT) {
+      console.log(`ℹ️  Default ports were busy, using ${NEXT_PORT} (HTTP) and ${WS_PORT} (WebSocket)`);
+    }
+  } catch (err) {
+    console.error('Failed to find available ports:', err.message);
+    dialog.showErrorBox('Port Error', 'Could not find available ports. Please close other applications using ports 7100-7120.');
+    app.quit();
+    return;
+  }
+
+  // Start MIDI server as separate process (pass the WS port as argument)
   startMidiServer();
 
   // Always create tray, even if other things fail
@@ -629,6 +714,8 @@ app.whenReady().then(async () => {
   }
 
   console.log('\nApp running in system tray. Click the tray icon for options.');
+  console.log(`HTTP server: http://localhost:${NEXT_PORT}`);
+  console.log(`WebSocket server: ws://localhost:${WS_PORT}`);
 });
 
 app.on('window-all-closed', (e) => {
