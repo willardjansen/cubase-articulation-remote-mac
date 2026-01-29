@@ -1,4 +1,4 @@
-const { app, Tray, Menu, shell, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -73,6 +73,62 @@ async function findAvailablePortPair(startPort = 7100) {
 // References
 let tray = null;
 let midiServerProcess = null;
+let splashWindow = null;
+
+// Create splash screen window
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 400,
+    height: 500,
+    frame: false,
+    transparent: false,
+    resizable: false,
+    center: true,
+    show: false,
+    backgroundColor: '#1a1a2e',
+    webPreferences: {
+      preload: path.join(__dirname, 'splash-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    }
+  });
+
+  splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+
+  splashWindow.once('ready-to-show', () => {
+    splashWindow.show();
+  });
+
+  return splashWindow;
+}
+
+// Send status update to splash window
+function updateSplashStatus(status) {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send('status', status);
+  }
+}
+
+// Send connection info to splash window
+function sendConnectionInfo(url) {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send('connection-info', { url });
+  }
+}
+
+// Close splash and open browser
+function closeSplashAndOpenBrowser(url) {
+  // Open browser first
+  shell.openExternal(url);
+
+  // Close splash after a short delay
+  setTimeout(() => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+      splashWindow = null;
+    }
+  }, 1500);
+}
 
 // Expression maps directory - use project folder
 function getExpressionMapsDir() {
@@ -776,12 +832,15 @@ function cleanup() {
 
 // App lifecycle
 app.whenReady().then(async () => {
-  // Hide dock icon on macOS (tray app)
-  if (process.platform === 'darwin') {
-    app.dock.hide();
-  }
+  // Show splash screen first (before hiding dock)
+  createSplashWindow();
+  updateSplashStatus('Starting Cubby Remote...');
+
+  // Hide dock icon on macOS (tray app) - but keep it visible while splash is showing
+  // We'll hide it after splash closes
 
   // Find available ports before starting servers
+  updateSplashStatus('Finding available ports...');
   try {
     const ports = await findAvailablePortPair(DEFAULT_NEXT_PORT);
     NEXT_PORT = ports.httpPort;
@@ -792,29 +851,50 @@ app.whenReady().then(async () => {
     }
   } catch (err) {
     console.error('Failed to find available ports:', err.message);
+    if (splashWindow) splashWindow.close();
     dialog.showErrorBox('Port Error', 'Could not find available ports. Please close other applications using ports 7100-7120.');
     app.quit();
     return;
   }
 
   // Initialize SSL certificates (will generate if not present)
+  updateSplashStatus('Initializing security...');
   initCertificates();
 
   // Start MIDI server as separate process (pass the WS port and cert dir as arguments)
+  updateSplashStatus('Starting MIDI server...');
   startMidiServer();
 
   // Always create tray, even if other things fail
   createTray();
 
   try {
+    updateSplashStatus('Starting web server...');
     await startNextServer();
-    // Auto-open browser only if server started
+
+    // Show connection info on splash
     const protocol = useSSL ? 'https' : 'http';
+    const localIP = getLocalIP();
+    const connectionUrl = `${protocol}://${localIP}:${NEXT_PORT}`;
+
+    updateSplashStatus('Ready!');
+    sendConnectionInfo(connectionUrl);
+
+    // Wait a moment for user to see the URL, then open browser and close splash
     setTimeout(() => {
-      shell.openExternal(`${protocol}://localhost:${NEXT_PORT}`);
-    }, 2000);
+      closeSplashAndOpenBrowser(`${protocol}://localhost:${NEXT_PORT}`);
+
+      // Hide dock after splash closes (macOS)
+      setTimeout(() => {
+        if (process.platform === 'darwin') {
+          app.dock.hide();
+        }
+      }, 500);
+    }, 3000); // Show connection info for 3 seconds
+
   } catch (error) {
     console.error('Failed to start Next.js server:', error);
+    updateSplashStatus('Failed to start server');
   }
 
   const httpProtocol = useSSL ? 'https' : 'http';
@@ -824,7 +904,7 @@ app.whenReady().then(async () => {
   console.log(`HTTP server: ${httpProtocol}://localhost:${NEXT_PORT}`);
   console.log(`WebSocket server: ${wsProtocol}://localhost:${WS_PORT}`);
   if (useSSL) {
-    console.log('🔒 SSL enabled - tablets will need to accept certificate on first connect');
+    console.log('SSL enabled - tablets will need to accept certificate on first connect');
   }
 });
 
