@@ -23,6 +23,34 @@ interface ServerMapsResponse {
   message?: string;
 }
 
+// Cubby Articulations API types
+interface CubbyLibrary {
+  path: string;
+  name: string;
+  developer: string;
+  category?: string;
+  exports?: string[];
+  tags?: string[];
+}
+
+interface CubbyLibraryDetail {
+  path: string;
+  name: string;
+  developer: string;
+  category?: string;
+  exports?: string[];
+  downloads: Record<string, {
+    count: number;
+    files: { name: string; url: string }[];
+  }>;
+}
+
+interface CubbyApiResponse {
+  version: string;
+  count: number;
+  libraries: CubbyLibrary[];
+}
+
 // Electron API type
 interface ElectronAPI {
   isElectron: boolean;
@@ -61,11 +89,13 @@ interface InstrumentLibraryProps {
   onClose?: () => void;
 }
 
+const CUBBY_API_BASE = 'https://articulations.cubbycomposer.com/api/v1';
+
 export function InstrumentLibrary({ currentMap, onLoadInstrument, onClose }: InstrumentLibraryProps) {
   const [instruments, setInstruments] = useState<SavedInstrument[]>([]);
   const [saveName, setSaveName] = useState('');
   const [showSaveForm, setShowSaveForm] = useState(false);
-  const [activeTab, setActiveTab] = useState<'saved' | 'server'>('server');
+  const [activeTab, setActiveTab] = useState<'saved' | 'server' | 'online'>('server');
   const [serverMaps, setServerMaps] = useState<ServerMapsResponse | null>(null);
   const [serverLoading, setServerLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -74,6 +104,15 @@ export function InstrumentLibrary({ currentMap, onLoadInstrument, onClose }: Ins
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [inElectron, setInElectron] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Online (Cubby Articulations) state
+  const [onlineLibraries, setOnlineLibraries] = useState<CubbyLibrary[]>([]);
+  const [onlineLoading, setOnlineLoading] = useState(false);
+  const [onlineError, setOnlineError] = useState<string | null>(null);
+  const [onlineSearch, setOnlineSearch] = useState('');
+  const [expandedLibrary, setExpandedLibrary] = useState<string | null>(null);
+  const [libraryDetail, setLibraryDetail] = useState<CubbyLibraryDetail | null>(null);
+  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   // Check if running in Electron after mount (to avoid hydration mismatch)
   useEffect(() => {
@@ -93,6 +132,76 @@ export function InstrumentLibrary({ currentMap, onLoadInstrument, onClose }: Ins
       setServerLoading(false);
     }
   }, []);
+
+  // Fetch online libraries from Cubby Articulations API
+  const fetchOnlineLibraries = useCallback(async () => {
+    setOnlineLoading(true);
+    setOnlineError(null);
+    try {
+      const res = await fetch(`${CUBBY_API_BASE}/libraries.json`);
+      const data: CubbyApiResponse = await res.json();
+      // Filter to only show libraries with Cubase exports
+      const cubaseLibraries = data.libraries.filter(lib =>
+        lib.exports?.includes('cubase')
+      );
+      setOnlineLibraries(cubaseLibraries);
+    } catch (e) {
+      setOnlineError('Failed to load online libraries');
+    } finally {
+      setOnlineLoading(false);
+    }
+  }, []);
+
+  // Fetch library detail with download URLs
+  const fetchLibraryDetail = useCallback(async (path: string) => {
+    try {
+      const res = await fetch(`${CUBBY_API_BASE}/libraries/${path}.json`);
+      const data: CubbyLibraryDetail = await res.json();
+      setLibraryDetail(data);
+    } catch (e) {
+      setOnlineError('Failed to load library details');
+    }
+  }, []);
+
+  // Download and save an expression map from Cubby Articulations
+  const downloadOnlineMap = useCallback(async (file: { name: string; url: string }) => {
+    setDownloadingFile(file.name);
+    try {
+      // Fetch the expression map content from GitHub
+      const res = await fetch(file.url);
+      const content = await res.text();
+
+      // Parse it to verify it's valid
+      let map = parseExpressionMap(content, file.name.replace('.expressionmap', ''));
+      if (hasUnassignedRemotes(map)) {
+        map = autoAssignRemoteTriggers(map);
+      }
+
+      // Upload to local server to save it
+      const formData = new FormData();
+      const blob = new Blob([content], { type: 'application/xml' });
+      formData.append('file', blob, file.name);
+
+      const uploadRes = await fetch('/api/expression-maps', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (uploadRes.ok) {
+        // Load it into the app
+        onLoadInstrument(map);
+        // Refresh server maps
+        await fetchServerMaps();
+        onClose?.();
+      } else {
+        setOnlineError('Failed to save expression map');
+      }
+    } catch (e) {
+      setOnlineError('Failed to download expression map');
+    } finally {
+      setDownloadingFile(null);
+    }
+  }, [fetchServerMaps, onLoadInstrument, onClose]);
 
   const loadServerMap = useCallback(async (mapFile: ServerMapFile) => {
     setLoadingMap(mapFile.path);
@@ -196,6 +305,40 @@ export function InstrumentLibrary({ currentMap, onLoadInstrument, onClose }: Ins
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fetch online libraries when tab changes to 'online'
+  useEffect(() => {
+    if (activeTab === 'online' && onlineLibraries.length === 0 && !onlineLoading) {
+      fetchOnlineLibraries();
+    }
+  }, [activeTab, onlineLibraries.length, onlineLoading, fetchOnlineLibraries]);
+
+  // Fetch library detail when expanded
+  useEffect(() => {
+    if (expandedLibrary) {
+      fetchLibraryDetail(expandedLibrary);
+    } else {
+      setLibraryDetail(null);
+    }
+  }, [expandedLibrary, fetchLibraryDetail]);
+
+  // Filter online libraries by search
+  const filteredOnlineLibraries = onlineLibraries.filter(lib => {
+    if (!onlineSearch) return true;
+    const search = onlineSearch.toLowerCase();
+    return lib.name.toLowerCase().includes(search) ||
+           lib.developer.toLowerCase().includes(search) ||
+           lib.tags?.some(t => t.toLowerCase().includes(search));
+  });
+
+  // Group online libraries by developer
+  const groupedOnlineLibraries = filteredOnlineLibraries.reduce((acc, lib) => {
+    if (!acc[lib.developer]) {
+      acc[lib.developer] = [];
+    }
+    acc[lib.developer].push(lib);
+    return acc;
+  }, {} as Record<string, CubbyLibrary[]>);
+
   const handleSave = () => {
     if (!currentMap || !saveName.trim()) return;
 
@@ -244,16 +387,25 @@ export function InstrumentLibrary({ currentMap, onLoadInstrument, onClose }: Ins
       <div className="flex gap-2 mb-4">
         <button
           onClick={() => setActiveTab('server')}
-          className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors
+          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors
                     ${activeTab === 'server'
                       ? 'bg-cubase-highlight text-white'
                       : 'bg-cubase-bg text-cubase-muted hover:text-cubase-text'}`}
         >
-          Server Maps
+          Local
+        </button>
+        <button
+          onClick={() => setActiveTab('online')}
+          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors
+                    ${activeTab === 'online'
+                      ? 'bg-cubase-highlight text-white'
+                      : 'bg-cubase-bg text-cubase-muted hover:text-cubase-text'}`}
+        >
+          Online
         </button>
         <button
           onClick={() => setActiveTab('saved')}
-          className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors
+          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors
                     ${activeTab === 'saved'
                       ? 'bg-cubase-highlight text-white'
                       : 'bg-cubase-bg text-cubase-muted hover:text-cubase-text'}`}
@@ -362,6 +514,130 @@ export function InstrumentLibrary({ currentMap, onLoadInstrument, onClose }: Ins
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Online (Cubby Articulations) Tab */}
+      {activeTab === 'online' && (
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          {/* Search */}
+          <div className="mb-4">
+            <input
+              type="text"
+              value={onlineSearch}
+              onChange={(e) => setOnlineSearch(e.target.value)}
+              placeholder="Search libraries..."
+              className="w-full px-3 py-2 rounded-lg bg-cubase-bg text-cubase-text
+                       border border-cubase-accent focus:outline-none focus:ring-2
+                       focus:ring-cubase-highlight"
+            />
+          </div>
+
+          {/* Libraries List */}
+          <div className="flex-1 overflow-y-auto">
+            {onlineLoading ? (
+              <div className="text-center py-8 text-cubase-muted">Loading libraries...</div>
+            ) : onlineError ? (
+              <div className="text-center py-8 text-red-400">{onlineError}</div>
+            ) : filteredOnlineLibraries.length === 0 ? (
+              <div className="text-center py-8 text-cubase-muted">
+                <p>No Cubase expression maps found</p>
+                <p className="text-sm mt-2">
+                  <a
+                    href="https://articulations.cubbycomposer.com/request"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-cubase-highlight hover:underline"
+                  >
+                    Request a library
+                  </a>
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {Object.entries(groupedOnlineLibraries).map(([developer, libs]) => (
+                  <div key={developer}>
+                    <div className="text-xs font-semibold text-cubase-muted uppercase tracking-wider mb-2">
+                      {developer}
+                    </div>
+                    <div className="space-y-1">
+                      {libs.map((lib) => (
+                        <div key={lib.path}>
+                          <button
+                            onClick={() => setExpandedLibrary(expandedLibrary === lib.path ? null : lib.path)}
+                            className="w-full text-left p-3 rounded-lg bg-cubase-bg
+                                     hover:bg-cubase-accent transition-colors"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-cubase-text">{lib.name}</div>
+                              <svg
+                                className={`w-4 h-4 text-cubase-muted transition-transform ${
+                                  expandedLibrary === lib.path ? 'rotate-180' : ''
+                                }`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </div>
+                            {lib.category && (
+                              <div className="text-xs text-cubase-muted mt-1 capitalize">{lib.category}</div>
+                            )}
+                          </button>
+
+                          {/* Expanded library files */}
+                          {expandedLibrary === lib.path && libraryDetail && (
+                            <div className="mt-1 ml-4 space-y-1">
+                              {libraryDetail.downloads?.cubase ? (
+                                <>
+                                  <div className="text-xs text-cubase-muted py-1">
+                                    {libraryDetail.downloads.cubase.count} expression map{libraryDetail.downloads.cubase.count !== 1 ? 's' : ''}
+                                  </div>
+                                  {libraryDetail.downloads.cubase.files.map((file) => (
+                                    <button
+                                      key={file.url}
+                                      onClick={() => downloadOnlineMap(file)}
+                                      disabled={downloadingFile === file.name}
+                                      className="w-full text-left p-2 rounded bg-cubase-surface
+                                               hover:bg-cubase-accent transition-colors
+                                               disabled:opacity-50 flex items-center gap-2"
+                                    >
+                                      <svg className="w-4 h-4 text-cubase-highlight" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                      </svg>
+                                      <span className="text-sm text-cubase-text truncate">
+                                        {downloadingFile === file.name ? 'Downloading...' : file.name.replace('.expressionmap', '')}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </>
+                              ) : (
+                                <div className="text-xs text-cubase-muted py-2">No Cubase maps available</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer with link */}
+          <div className="mt-4 pt-4 border-t border-cubase-accent text-center">
+            <a
+              href="https://articulations.cubbycomposer.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-cubase-muted hover:text-cubase-highlight"
+            >
+              Browse more at articulations.cubbycomposer.com
+            </a>
           </div>
         </div>
       )}
