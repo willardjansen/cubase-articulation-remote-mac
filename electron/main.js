@@ -20,6 +20,10 @@ let NEXT_PORT = DEFAULT_NEXT_PORT;
 let CERT_DIR = null;
 let useSSL = false;
 
+// Set to true to enable SSL (requires accepting certificate on each device)
+// Set to false for easier setup (HTTP/WS works fine for local networks)
+const ENABLE_SSL = false;
+
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // Check if a port is available
@@ -111,6 +115,12 @@ function getLocalIP() {
 
 // Initialize SSL certificates
 function initCertificates() {
+  // Check if SSL is enabled
+  if (!ENABLE_SSL) {
+    console.log('SSL disabled - using HTTP/WS (works fine for local networks)');
+    return false;
+  }
+
   // Store certs in app userData directory for persistence
   CERT_DIR = path.join(app.getPath('userData'), 'certs');
 
