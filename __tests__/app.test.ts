@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
+// Verified: Claude Code automation working correctly
 describe('Cubby Remote', () => {
   it('should have a valid package name', async () => {
     const pkg = await import('../package.json');
